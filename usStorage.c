@@ -1,0 +1,1396 @@
+/*
+ * @brief U-Storage Project
+ *
+ * @note
+ * Copyright(C) i4season, 2016
+ * Copyright(C) Szitman, 2016
+ * All rights reserved.
+ *
+ * @par
+ * Software that is described herein is for illustrative purposes only
+ * which provides customers with programming information regarding the
+ * LPC products.  This software is supplied "AS IS" without any warranties of
+ * any kind, and NXP Semiconductors and its licensor disclaim any and
+ * all warranties, express or implied, including all implied warranties of
+ * merchantability, fitness for a particular purpose and non-infringement of
+ * intellectual property rights.  NXP Semiconductors assumes no responsibility
+ * or liability for the use of the software, conveys no license or rights under any
+ * patent, copyright, mask work right, or any other intellectual property rights in
+ * or to any products. NXP Semiconductors reserves the right to make changes
+ * in the software without notification. NXP Semiconductors also makes no
+ * representation or warranty that such application will be suitable for the
+ * specified use without further testing or modification.
+ *
+ * @par
+ * Permission to use, copy, modify, and distribute this software and its
+ * documentation is hereby granted, under NXP Semiconductors' and its
+ * licensor's relevant copyrights in the software, without fee, provided that it
+ * is used in conjunction with NXP Semiconductors microcontrollers.  This
+ * copyright, permission, and disclaimer notice must appear in all copies of
+ * this code.
+ */
+ #if defined(NXP_CHIP_18XX)
+#pragma arm section code ="USB_RAM2", rwdata="USB_RAM2"
+#endif
+ #include "usUsb.h"
+#include "usDisk.h"
+#include "usProtocol.h"
+#include "usSys.h"
+#if defined(NXP_CHIP_18XX)
+#include "fsusb_cfg.h"
+#include "FreeRTOS.h"
+#include "task.h"
+#elif defined(LINUX)
+#include <stdio.h>
+#include <errno.h>
+#include <string.h>
+#include <stdlib.h>
+#include <signal.h>
+#include <unistd.h>
+#include <sys/socket.h>
+#include <sys/un.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <sys/resource.h>
+#include <fcntl.h>
+#include <linux/netlink.h>
+#include <sys/socket.h>
+#include <poll.h>
+#include <pthread.h>
+
+#endif
+
+/*****************************************************************************
+ * Private types/enumerations/variables
+ ****************************************************************************/
+#if defined(DEBUG_ENABLE1)
+#define SDEBUGOUT(...) do {printf("[Storage Mod]");printf(__VA_ARGS__);} while(0)
+#else
+#define SDEBUGOUT(...)
+#endif
+
+#define USDISK_SECTOR		512
+#define OP_DIV(x)			((x)/USDISK_SECTOR)
+#define OP_MOD(x)			((x)%USDISK_SECTOR)
+
+#if defined(LINUX)
+#define USB_WRTE			(256*1024)
+#define USB_WRTESEC	512     /*USB_WRTE/512*/
+#else
+#define USB_WRTE			(64*1024)
+#define USB_WRTESEC	128    /*USB_WRTE/512*/
+#endif
+#ifdef ENOUGH_MEMORY
+uint8_t usbWriteBuffer[USB_WRTE];
+#endif
+
+#if defined(NXP_CHIP_18XX)
+
+#define NXP_USB_PHONE 	1
+#define NXP_USB_DISK	0
+
+/** LPCUSBlib Mass Storage Class driver interface configuration and state information. This structure is
+ *  passed to all Mass Storage Class driver functions, so that multiple instances of the same class
+ *  within a device can be differentiated from one another.
+ */
+ /** Use USB0 for Phone
+ *    Use USB1 for Mass Storage
+*/
+static USB_ClassInfo_MS_Host_t UStorage_Interface[]	= {
+	{
+		.Config = {
+			.DataINPipeNumber       = 1,
+			.DataINPipeDoubleBank   = false,
+
+			.DataOUTPipeNumber      = 2,
+			.DataOUTPipeDoubleBank  = false,
+			.PortNumber = 0,
+		},
+	},
+	{
+			.Config = {
+			.DataINPipeNumber       = 1,
+			.DataINPipeDoubleBank   = false,
+
+			.DataOUTPipeNumber      = 2,
+			.DataOUTPipeDoubleBank  = false,
+			.PortNumber = 1,
+		},
+	},
+	
+};
+
+void scu_pinmux(unsigned port, unsigned pin, unsigned mode, unsigned func)
+{
+	volatile unsigned int * const scu_base=(unsigned int*)(LPC_SCU_BASE);
+	scu_base[(PORT_OFFSET*port+PIN_OFFSET*pin)/4]=mode+func;
+} /* scu_pinmux */
+
+#define SCU_SFSPx(port, pin) (*((volatile uint32_t *) ((LPC_SCU_BASE + PORT_OFFSET * port + PIN_OFFSET * pin))))
+/**
+  \fn          int32_t SCU_PinConfiguare (uint8_t port, uint8_t pin, uint32_t pin_cfg)
+  \brief       Set pin function and electrical characteristics
+  \param[in]   port       Port number (0..15)
+  \param[in]   pin        Pin number (0..31)
+  \param[in]   pin_cfg    pin_cfg configuration bit mask
+   - \b  0: function succeeded
+   - \b -1: function failed
+*/
+int32_t SCU_PinConfigure (uint8_t port, uint8_t pin, uint32_t pin_cfg) 
+{
+	if ((port > 15) || (pin > 31)) return -1;
+	SCU_SFSPx(port, pin) = pin_cfg;
+	return 0;
+}
+
+int32_t SCU_USB1_PinConfigure (uint32_t USB1_pin_cfg) 
+{
+	LPC_SCU->SFSUSB = USB1_pin_cfg;
+	return 0;
+}
+
+#define SCU_SFSUSB_AIM                (1    <<  0)
+#define SCU_SFSUSB_ESEA               (1    <<  1)
+#define SCU_SFSUSB_EPD                (1    <<  2)
+#define SCU_SFSUSB_EPWR               (1    <<  4)
+#define SCU_SFSUSB_VBUS               (1    <<  5)
+
+#define SCU_USB1_PIN_CFG_AIM                  (SCU_SFSUSB_AIM )
+#define SCU_USB1_PIN_CFG_ESEA                 (SCU_SFSUSB_ESEA)
+#define SCU_USB1_PIN_CFG_EPD                  (SCU_SFSUSB_EPD )
+#define SCU_USB1_PIN_CFG_EPWR                 (SCU_SFSUSB_EPWR)
+#define SCU_USB1_PIN_CFG_VBUS                 (SCU_SFSUSB_VBUS)
+
+#define USB_PORTSC1_H_PTS_POS                  (          30U)
+#define USB_PORTSC1_H_PTS_MSK                  (3UL    << USB_PORTSC1_H_PTS_POS)
+#define USB_PORTSC1_H_PTS(n)                   (((n)   << USB_PORTSC1_H_PTS_POS) & USB_PORTSC1_H_PTS_MSK)
+static void SetUsb1ClockPinmux( void )
+{
+	volatile int32_t tmo = 1000;
+	uint32_t  portsc;
+		
+#if (RTE_USB_USB1_HS_PHY_EN)// modified by Roger
+	SCU_PinConfigure(RTE_USB1_ULPI_CLK_PORT, RTE_USB1_ULPI_CLK_BIT,  RTE_USB1_ULPI_CLK_FUNC | SCU_SFS_EPUN | SCU_SFS_EHS | SCU_SFS_EZI | SCU_SFS_ZIF);
+	SCU_PinConfigure(RTE_USB1_ULPI_DIR_PORT, RTE_USB1_ULPI_DIR_BIT,  RTE_USB1_ULPI_DIR_FUNC | SCU_SFS_EPUN | SCU_SFS_EHS | SCU_SFS_EZI | SCU_SFS_ZIF);
+	SCU_PinConfigure(RTE_USB1_ULPI_STP_PORT, RTE_USB1_ULPI_STP_BIT,  RTE_USB1_ULPI_STP_FUNC | SCU_SFS_EPUN | SCU_SFS_EHS | SCU_SFS_EZI | SCU_SFS_ZIF);
+	SCU_PinConfigure(RTE_USB1_ULPI_NXT_PORT, RTE_USB1_ULPI_NXT_BIT,  RTE_USB1_ULPI_NXT_FUNC | SCU_SFS_EPUN | SCU_SFS_EHS | SCU_SFS_EZI | SCU_SFS_ZIF);
+	SCU_PinConfigure(RTE_USB1_ULPI_D0_PORT,  RTE_USB1_ULPI_D0_BIT,   RTE_USB1_ULPI_D0_FUNC | SCU_SFS_EPUN | SCU_SFS_EHS | SCU_SFS_EZI | SCU_SFS_ZIF );
+	SCU_PinConfigure(RTE_USB1_ULPI_D1_PORT,  RTE_USB1_ULPI_D1_BIT,   RTE_USB1_ULPI_D1_FUNC | SCU_SFS_EPUN | SCU_SFS_EHS | SCU_SFS_EZI | SCU_SFS_ZIF );
+	SCU_PinConfigure(RTE_USB1_ULPI_D2_PORT,  RTE_USB1_ULPI_D2_BIT,   RTE_USB1_ULPI_D2_FUNC | SCU_SFS_EPUN | SCU_SFS_EHS | SCU_SFS_EZI | SCU_SFS_ZIF );
+	SCU_PinConfigure(RTE_USB1_ULPI_D3_PORT,  RTE_USB1_ULPI_D3_BIT,   RTE_USB1_ULPI_D3_FUNC | SCU_SFS_EPUN | SCU_SFS_EHS | SCU_SFS_EZI | SCU_SFS_ZIF );
+	SCU_PinConfigure(RTE_USB1_ULPI_D4_PORT,  RTE_USB1_ULPI_D4_BIT,   RTE_USB1_ULPI_D4_FUNC | SCU_SFS_EPUN | SCU_SFS_EHS | SCU_SFS_EZI | SCU_SFS_ZIF );
+	SCU_PinConfigure(RTE_USB1_ULPI_D5_PORT,  RTE_USB1_ULPI_D5_BIT,   RTE_USB1_ULPI_D5_FUNC | SCU_SFS_EPUN | SCU_SFS_EHS | SCU_SFS_EZI | SCU_SFS_ZIF );
+	SCU_PinConfigure(RTE_USB1_ULPI_D6_PORT,  RTE_USB1_ULPI_D6_BIT,   RTE_USB1_ULPI_D6_FUNC | SCU_SFS_EPUN | SCU_SFS_EHS | SCU_SFS_EZI | SCU_SFS_ZIF );
+	SCU_PinConfigure(RTE_USB1_ULPI_D7_PORT,  RTE_USB1_ULPI_D7_BIT,   RTE_USB1_ULPI_D7_FUNC | SCU_SFS_EPUN | SCU_SFS_EHS | SCU_SFS_EZI | SCU_SFS_ZIF );
+#endif
+
+	/* switch to ulpi phy and turn on the power to phy*/
+	printf("PORTSC1_H = %x\r\n",LPC_USB1->PORTSC1_H);
+	portsc = LPC_USB1->PORTSC1_H & 0x00FFFFFF;
+	portsc |= 0x80000000;
+	LPC_USB1->PORTSC1_H = portsc;
+	/* reset the controller */
+	printf("bask %x \r\n", &(LPC_CCU1->CLKCCU[CLK_MX_USB1].CFG));
+	LPC_CGU->BASE_CLK[CLK_BASE_USB1]     = (0x01U << 11) | (0x0CU << 24) ; 
+
+	/* disable USB1_CLOCK */
+	LPC_CCU1->CLKCCU[CLK_USB1].CFG = 0;
+
+	/* reset the controller */
+	LPC_CCU1->CLKCCU[CLK_MX_USB1].CFG |= 1U;
+	while (!(LPC_CCU1->CLKCCU[CLK_MX_USB1].STAT & 1U));
+	LPC_USB1->PORTSC1_H |=   USB_PORTSC1_H_PTS(2U);
+	SCU_USB1_PinConfigure (SCU_USB1_PIN_CFG_AIM  |
+					SCU_USB1_PIN_CFG_ESEA |
+					SCU_USB1_PIN_CFG_EPD  |
+					SCU_USB1_PIN_CFG_EPWR);
+}
+
+
+/*****************************************************************************
+ * Public types/enumerations/variables
+ ****************************************************************************/
+static void usSys_init(int port_num)
+{
+	if(port_num >= 2){
+		die(1);
+		return;
+	}
+#if (defined(CHIP_LPC43XX) || defined(CHIP_LPC18XX))
+	if (port_num== 0){
+		Chip_USB0_Init();
+	} else {
+		SetUsb1ClockPinmux();
+//		Chip_USB1_Init();
+	}
+#endif
+	USB_Init(UStorage_Interface[port_num].Config.PortNumber, USB_MODE_Host);
+}
+
+/** Configures the board hardware and chip peripherals for the demo's functionality. */
+static void SetupHardware(void)
+{
+#if (defined(CHIP_LPC43XX_NOSYSTEM))
+	SystemCoreClockUpdate();
+	Board_Init();
+#endif
+	usSys_init(0);
+	usSys_init(1);
+#if (defined(CHIP_LPC43XX_NOSYSTEM))
+	/* Hardware Initialization */
+	Board_Debug_Init();
+#endif
+}
+
+#endif //#if defined(NXP_CHIP_18XX)
+/*****************************************************************************
+ * Private functions
+ ****************************************************************************/
+static int usStorage_sendHEAD(struct scsi_head *header)
+{
+	uint8_t buffer[PRO_HDR] = {0};
+
+	if(!header){
+		return 1;
+	}
+
+	memcpy(buffer, header, PRO_HDR);
+	/*Send To Phone*/
+	if(usProtocol_SendPackage(buffer, PRO_HDR)){
+		SDEBUGOUT("Send To Phone[Just Header Error]\r\n");
+		return 1;
+	}
+
+	return 0;
+}
+
+#ifdef NXP_ALLOW_WARING
+static int usStorage_sendHEADBUF(struct scsi_head *header)
+{
+	uint8_t *buffer = NULL;
+	uint32_t size = 0;
+
+	if(!header){
+		return 1;
+	}
+
+	if(usProtocol_GetAvaiableBuffer((void **)&buffer, &size)){
+		SDEBUGOUT("usProtocol_GetAvaiableBuffer Failed\r\n");
+		return 1;
+	}
+	memcpy(buffer, header, PRO_HDR);
+	/*Send To Phone*/
+	if(usProtocol_SendPackage(buffer, PRO_HDR)){
+		SDEBUGOUT("Send To Phone[Just Header Error]\r\n");
+		return 1;
+	}
+
+	return 0;
+}
+#endif
+
+/*
+*Read Multi TIme
+*/
+static int usStorage_diskMULREAD(struct scsi_head *header)
+{
+	uint8_t *buffer = NULL, rc;
+	uint32_t size = 0, rsize = 0, avsize = 0;
+	int32_t addr = 0;
+
+	if(!header){
+		SDEBUGOUT("usStorage_diskREAD Parameter Failed\r\n");
+		return 1;
+	}
+	addr = header->addr;
+	
+	if(usProtocol_GetAvaiableBuffer((void **)&buffer, &size)){
+		SDEBUGOUT("usProtocol_GetAvaiableBuffer Failed\r\n");
+		return 1;
+	}
+	memcpy(buffer, header, PRO_HDR);
+	/*Send To Phone*/
+	if((rc = usProtocol_SendPackage(buffer, PRO_HDR))){
+		SDEBUGOUT("Send To Phone[Just Header Error]\r\n");
+		return rc;
+	}
+	if(!header->len){		
+		SDEBUGOUT("Read Request Len is 0[MayBeError]\r\n");
+		return 0;
+	}
+	while(rsize < header->len){
+		uint32_t secCount = 0;
+		if(usProtocol_GetAvaiableBuffer((void **)&buffer, &size)){
+			SDEBUGOUT("usProtocol_GetAvaiableBuffer Failed\r\n");
+			return 1;
+		}
+
+		avsize = min(USDISK_SECTOR*OP_DIV(size), header->len-rsize); /*We leave a sector for safe*/		
+		secCount = OP_DIV(avsize);
+		if(usDisk_DiskReadSectors(buffer, addr, secCount)){
+			SDEBUGOUT("Read Sector Error[SndTotal:%d addr:%d  SectorCount:%d]\r\n",
+					rsize, addr, secCount);
+			return 1;
+		}
+		/*Send To Phone*/
+		if((rc = usProtocol_SendPackage(buffer, avsize))){
+			SDEBUGOUT("Send To Phone[SndTotal:%d addr:%d  SectorCount:%d]\r\n",
+					rsize, addr, secCount);
+			return rc;
+		}
+		SDEBUGOUT("READ INFO:%p[SZ:%dBytes][DS:%d(%d-->%d) [TS:%dBytes]\r\n", 
+						buffer, avsize, header->addr, addr, addr +secCount, header->len);
+		addr += secCount;
+		rsize += avsize;
+	}
+
+	SDEBUGOUT("REQUEST READ OK:\r\nwtag=%d\r\nctrid=%d\r\naddr=%d\r\nlen=%d\r\nwlun=%d\r\n", 
+			header->wtag, header->ctrid, header->addr, header->len, header->wlun);
+	
+	return 0;
+}
+
+/*Read Once*/
+static int usStorage_diskSIGREAD(struct scsi_head *header)
+{
+	uint8_t *buffer = NULL;
+	uint32_t size = 0;
+	uint8_t rc;
+
+	if(!header){
+		SDEBUGOUT("usStorage_diskREAD Parameter Failed\r\n");
+		return 1;
+	}
+	
+	if(usProtocol_GetAvaiableBuffer((void **)&buffer, &size)){
+		SDEBUGOUT("usProtocol_GetAvaiableBuffer Failed\r\n");
+		return 1;
+	}
+	if(size < header->len){
+		SDEBUGOUT("usStorage_diskSIGREAD Space Not Enough\r\n");
+		return 1;
+	}
+
+	if(usDisk_DiskReadSectors(buffer, header->addr, OP_DIV(header->len))){
+		SDEBUGOUT("Read Sector Error[SndTotal:%d addr:%d  SectorCount:%d]\r\n",
+				header->len+PRO_HDR, header->addr, OP_DIV(header->len));
+		/*Write to Phone*/
+		header->relag = 1;
+		usStorage_sendHEAD(header);	
+		return 1;
+	}
+	/*Send To Phone*/
+	usStorage_sendHEAD(header); 
+	if((rc = usProtocol_SendPackage(buffer, header->len))){
+		SDEBUGOUT("Send To Phone[SndTotal:%d addr:%d  SectorCount:%d]\r\n",
+				header->len+PRO_HDR, header->addr, OP_DIV(header->len));
+		return rc;
+	}
+	
+	SDEBUGOUT("REQUEST READ OK:\r\nwtag=%d\r\nctrid=%d\r\naddr=%d\r\nlen=%d\r\nwlun=%d\r\n", 
+			header->wtag, header->ctrid, header->addr, header->len, header->wlun);
+	
+	return 0;
+}
+
+static int usStorage_diskREAD(struct scsi_head *header)
+{
+	uint32_t size = 0;
+	uint8_t *buffer = NULL;
+
+	if(!header){
+		SDEBUGOUT("usStorage_diskREAD Parameter Error\r\n");
+		return 1;
+	}
+
+	if(!header->len){
+		SDEBUGOUT("usStorage_diskREAD 0Bytes\r\n");
+		/*Write to Phone*/
+		header->relag = 1;
+		usStorage_sendHEAD(header);	
+		return 1;
+	}
+	
+	if(usProtocol_GetAvaiableBuffer((void **)&buffer, &size)){
+		SDEBUGOUT("usStorage_diskREAD Failed\r\n");
+		return 1;
+	}
+	if(size < header->len+PRO_HDR){
+		SDEBUGOUT("Use usStorage_diskMULREAD To Send[%d/%d]\r\n",
+					header->len+PRO_HDR, size);
+		return usStorage_diskMULREAD(header);
+	}
+
+	return usStorage_diskSIGREAD(header);
+}
+
+#ifdef ENOUGH_MEMORY
+/*reduce write disk counts, but increase memcpy system call and increase cpu usage*/
+static int usStorage_diskWRITE(uint8_t *buffer, uint32_t recvSize, struct scsi_head *header)
+{
+	uint32_t hSize = recvSize;
+	uint32_t paySize, curSize = 0;
+	int32_t addr;	
+	uint8_t *writePtr = NULL, rc = 0;
+	uint32_t usbWriteBufferLen = 0;
+
+	if(!buffer || !header){
+		SDEBUGOUT("usStorage_diskWRITE Parameter Error\r\n");
+		return 1;
+	}
+	if(!header->len){
+		SDEBUGOUT("usStorage_diskWRITE Length is 0\r\n");
+		return 0;
+	}
+	addr = header->addr;
+	/*Write the first payload*/
+	paySize= recvSize-PRO_HDR;
+
+	writePtr = usbWriteBuffer;
+	usbWriteBufferLen = USB_WRTE;
+	if(paySize){
+		memcpy(writePtr, buffer+PRO_HDR, paySize);
+		usbWriteBufferLen -= paySize;
+		writePtr += paySize;
+	}
+	curSize = paySize;
+	SDEBUGOUT("REQUEST WRITE: PART INFO: addr:%d curSize:%dBytes paySize:%dBytes WriteBuffer:%d\r\n", 
+							addr, curSize, paySize, usbWriteBufferLen);	
+	while(curSize < header->len){
+		uint8_t *pbuffer = NULL;
+		paySize = 0;
+		if((rc = usProtocol_RecvPackage((void **)&pbuffer, hSize, &paySize))){
+			SDEBUGOUT("usProtocol_RecvPackage Failed\r\n");
+			/*Write to Phone*/
+			header->relag = 1;
+			//usStorage_sendHEAD(header);			
+			return rc;
+		}
+		while(usbWriteBufferLen < paySize){
+			SDEBUGOUT("Usb Write Buffer Overflow, Write To Disk\r\n");
+			memcpy(writePtr, pbuffer, usbWriteBufferLen);
+			if(usDisk_DiskWriteSectors(usbWriteBuffer, addr, USB_WRTESEC)){
+				SDEBUGOUT("REQUEST WRITE Error[addr:%d	SectorCount:%d]\r\n",
+								addr, USB_WRTESEC);
+				/*Write to Phone*/
+				header->relag = 1;
+				rc = usStorage_sendHEAD(header);
+				return rc?rc:1;
+			}
+			addr += USB_WRTESEC;
+			curSize += usbWriteBufferLen;
+			/*Reset Var*/
+			writePtr = usbWriteBuffer;
+			pbuffer += usbWriteBufferLen;
+			paySize = paySize-usbWriteBufferLen;
+			usbWriteBufferLen = USB_WRTE;
+		}
+		memcpy(writePtr, pbuffer, paySize);
+		writePtr += paySize;
+		usbWriteBufferLen -= paySize;		
+		curSize += paySize;
+	}
+
+	if(usbWriteBufferLen != USB_WRTE &&
+			usDisk_DiskWriteSectors(usbWriteBuffer, addr,
+				OP_DIV(USB_WRTE-usbWriteBufferLen))){
+		SDEBUGOUT("REQUEST WRITE Error[addr:%d	SectorCount:%d]\r\n",
+						addr, OP_DIV(USB_WRTE-usbWriteBufferLen));
+		header->relag = 1;
+	}
+
+	/*Write to Phone*/
+	if((rc = usStorage_sendHEAD(header))){
+		SDEBUGOUT("Error Send Header\r\n");
+		return rc;
+	}
+
+	SDEBUGOUT("REQUEST WRITE FINISH:\r\nwtag=%d\r\nctrid=%d\r\naddr=%d\r\nlen=%d\r\nwlun=%d\r\n", 
+			header->wtag, header->ctrid, header->addr, header->len, header->wlun);
+	
+	return 0;
+}
+
+#else
+static int usStorage_diskWRITE(uint8_t *buffer, uint32_t recvSize, struct scsi_head *header)
+{
+	uint32_t hSize = recvSize;
+	uint32_t paySize, curSize = 0, secSize = 0, sdivSize = 0;
+	int32_t addr;	
+	uint8_t sector[USDISK_SECTOR] = {0};
+
+	if(!buffer || !header){
+		SDEBUGOUT("usStorage_diskWRITE Parameter Error\r\n");
+		return 1;
+	}
+	if(!header->len){
+		SDEBUGOUT("usStorage_diskWRITE Length is 0\r\n");
+		return 0;
+	}
+	addr = header->addr;
+	/*Write the first payload*/
+	paySize= recvSize-PRO_HDR;
+	if((secSize = OP_MOD(paySize)) > 0){
+		memcpy(sector, buffer+PRO_HDR+OP_DIV(paySize)*USDISK_SECTOR, 
+					secSize);
+		SDEBUGOUT("REQUEST WRITE: InComplete Sector Detect[BEGIN]:%d/%dBytes\r\n", 
+								secSize, USDISK_SECTOR);
+	}
+	if((sdivSize = OP_DIV(paySize)) > 0&& 
+			usDisk_DiskWriteSectors(buffer+PRO_HDR, addr, sdivSize)){
+		SDEBUGOUT("REQUEST WRITE Error[addr:%d  SectorCount:%d]\r\n",
+						addr, sdivSize);
+		/*Write to Phone*/
+		header->relag = 1;
+		usStorage_sendHEAD(header);	
+		return 1;
+	}
+	addr += sdivSize;
+	curSize = paySize-secSize;
+	SDEBUGOUT("REQUEST WRITE: PART INFO: addr:%d curSize:%dBytes %d/%dBytes\r\n", 
+							addr, curSize, secSize, paySize);	
+	while(curSize < header->len){
+		uint32_t secCount = 0;
+		uint8_t *ptr = NULL, *pbuffer = NULL;
+		if(usProtocol_RecvPackage((void **)&pbuffer, hSize, &paySize)){
+			SDEBUGOUT("usProtocol_RecvPackage Failed\r\n");
+			/*Write to Phone*/
+			header->relag = 1;
+			usStorage_sendHEAD(header);			
+			return 1;
+		}
+		/*add handle size*/		
+		hSize+= paySize;
+		ptr = pbuffer;
+		if(secSize){
+			SDEBUGOUT("REQUEST WIRTE: Handle InComplete Sector[%dBytes Payload:%dBytes]\r\n",
+					secSize, paySize);
+			if(paySize < USDISK_SECTOR-secSize){
+				memcpy(sector+secSize, ptr, paySize);
+				curSize += paySize;
+				secSize += paySize;
+				SDEBUGOUT("REQUEST WIRTE: PayLoad Not Enough Fill Sector[update to %dBytes CurSize:%dByte Payload:%dBytes]\r\n",
+						secSize, curSize, paySize);
+				continue;
+			}
+			memcpy(sector+secSize, ptr, USDISK_SECTOR-secSize);
+			ptr += (USDISK_SECTOR-secSize);
+			/*Write to disk*/
+			if(usDisk_DiskWriteSectors(sector, addr, 1)){
+				SDEBUGOUT("REQUEST WRITE Last Sector Error[addr:%d SectorCount:%d]\r\n",
+							addr, secCount);
+				/*Write to Phone*/
+				header->relag = 1;
+				usStorage_sendHEAD(header);				
+				return 1;
+			}
+			/*add var*/
+			addr++;
+			curSize += USDISK_SECTOR;
+			paySize -= (USDISK_SECTOR-secSize);
+			secSize = 0;
+			SDEBUGOUT("REQUEST WIRTE: Handle InComplete Sector OK[Payload:%dBytes]\r\n",
+								paySize);			
+		}
+		
+		secCount = OP_DIV(paySize);
+		if(!secSize && (secSize = OP_MOD(paySize)) > 0){
+			SDEBUGOUT("REQUEST WRITE: InComplete Sector Detect [LAST]:%d/%dBytes\r\n", 
+									secSize, USDISK_SECTOR);
+			memcpy(sector, ptr+secCount*USDISK_SECTOR, secSize);
+		}
+		/*Write to disk*/
+		if(secCount && usDisk_DiskWriteSectors(ptr, addr, secCount)){
+			SDEBUGOUT("REQUEST WRITE Error[addr:%d	SectorCount:%d]\r\n",
+							addr, sdivSize);
+			/*Write to Phone*/
+			header->relag = 1;
+			usStorage_sendHEAD(header);				
+			return 1;
+		}
+		/*Add var*/
+		addr += secCount;
+		curSize += secCount*USDISK_SECTOR;
+	}
+
+	/*Write to Phone*/
+	if(usStorage_sendHEAD(header)){
+		SDEBUGOUT("Error Send Header\r\n");
+		return 1;
+	}
+
+	SDEBUGOUT("REQUEST WRITE FINISH:\r\nwtag=%d\r\nctrid=%d\r\naddr=%d\r\nlen=%d\r\nwlun=%d\r\n", 
+			header->wtag, header->ctrid, header->addr, header->len, header->wlun);
+	return 0;
+}
+#endif
+
+static int usStorage_diskINQUIRY(struct scsi_head *header)
+{
+	uint8_t *buffer = NULL;
+	uint32_t size = 0, total = 0;
+	struct scsi_inquiry_info dinfo;
+	uint8_t rc = 0;
+	
+	if(!header){
+		SDEBUGOUT("usStorage_diskINQUIRY Parameter Failed\r\n");
+		return 1;
+	}
+	if(header->len != sizeof(struct scsi_inquiry_info)){
+		SDEBUGOUT("usStorage_diskINQUIRY Parameter Error:[%d/%d]\r\n",
+					header->len, sizeof(struct scsi_inquiry_info));
+		return 1;
+	}
+	if(usDisk_DiskInquiry(&dinfo)){
+		SDEBUGOUT("usDisk_DiskInquiry  Error\r\n");
+		return 1;
+	}
+	if(usProtocol_GetAvaiableBuffer((void **)&buffer, &size)){
+		SDEBUGOUT("usProtocol_GetAvaiableBuffer Failed\r\n");
+		return 1;
+	}
+	memcpy(buffer, header, PRO_HDR);
+	memcpy(buffer+PRO_HDR, &dinfo,  sizeof(struct scsi_inquiry_info));
+	total = PRO_HDR+sizeof(struct scsi_inquiry_info);
+	
+	if((rc  = usProtocol_SendPackage(buffer, total))){
+		SDEBUGOUT("usStorage_diskINQUIRY Failed\r\n");
+		return rc;
+	}
+	
+	SDEBUGOUT("usStorage_diskINQUIRY Successful\r\nDisk INQUIRY\r\nSize:%lld\r\nVendor:%s\r\nProduct:%s\r\nVersion:%s\r\nSerical:%s\r\n", 
+				dinfo.size, dinfo.vendor, dinfo.product, dinfo.version, dinfo.serial);
+	
+	return 0;
+}
+
+static int usStorage_diskLUN(struct scsi_head *header)
+{
+	uint8_t num = usDisk_DiskNum();
+	uint8_t *buffer = NULL, rc = 0;
+	uint32_t size = 0, total = 0;
+
+	if(usProtocol_GetAvaiableBuffer((void **)&buffer, &size)){
+		SDEBUGOUT("usProtocol_GetAvaiableBuffer Failed\r\n");
+		return 1;
+	}	
+	SDEBUGOUT("AvaiableBuffer 0x%p[%dBytes][Disk:%d]\r\n", 
+				buffer, size, num);
+	
+	total = sizeof(struct scsi_head);
+	memcpy(buffer, header, total);
+	memcpy(buffer+total, &num, 1);
+	total += 1;
+	
+	if((rc = usProtocol_SendPackage(buffer, total))){
+		SDEBUGOUT("usProtocol_SendPackage Failed\r\n");
+		return rc;
+	}
+	SDEBUGOUT("usStorage_diskLUN Successful[DiskNumber %d]\r\n", num);
+	return 0;
+}
+
+static int usStorage_firmwareINFO(struct scsi_head *header)
+{
+	vs_acessory_parameter dinfo;	
+	int flen = sizeof(vs_acessory_parameter);
+	uint8_t *buffer = NULL, rc = 0;
+	uint32_t size = 0, total = 0;
+
+	if(usProtocol_GetAvaiableBuffer((void **)&buffer, &size)){
+		SDEBUGOUT("usProtocol_GetAvaiableBuffer Failed\r\n");
+		return 1;
+	}	
+	SDEBUGOUT("AvaiableBuffer 0x%p[%dBytes]\r\n", buffer, size);
+	
+	total = sizeof(struct scsi_head);
+	memcpy(buffer, header, total);
+	memset(&dinfo, 0, sizeof(vs_acessory_parameter));
+	strcpy(dinfo.fw_version, "1.0");
+	strcpy(dinfo.hw_version, "1.0");
+	strcpy(dinfo.manufacture, "szitman");
+	strcpy(dinfo.model_name, "nxp");
+	strcpy(dinfo.sn, "1234567890");
+	strcpy(dinfo.license, "1234567890");
+	memcpy(buffer+total, &dinfo, flen);
+	total += flen;
+	
+	if((rc = usProtocol_SendPackage(buffer, total))){
+		SDEBUGOUT("usProtocol_SendPackage Failed\r\n");
+		return rc;
+	}
+	SDEBUGOUT("usStorage_firmwareINFO Successful Firmware Info:\r\nVendor:%s\r\nProduct:%s\r\nVersion:%s\r\nSerical:%s\r\nLicense:%s\r\n", 
+					dinfo.manufacture, dinfo.model_name, dinfo.fw_version, dinfo.sn, dinfo.license);
+	
+	return 0;
+}
+
+
+static int usStorage_Handle(void)
+{	
+	uint8_t *buffer;
+	uint32_t size=0;
+	uint8_t rc;
+	struct scsi_head header;
+
+	if((rc = usProtocol_RecvPackage((void **)&buffer, 0, &size))){
+		if(rc == PROTOCOL_DISCONNECT){
+			return PROTOCOL_DISCONNECT;
+		}
+		SDEBUGOUT("usProtocol_RecvPackage Failed\r\n");
+		return 1;
+	}
+	if(size < PRO_HDR){
+		SDEBUGOUT("usProtocol_RecvPackage Too Small [%d]Bytes\r\n", size);
+		return 1;
+	}
+	/*Must save the header, it will be erase*/
+	memcpy(&header, buffer, PRO_HDR);
+	SDEBUGOUT("usProtocol_RecvPackage [%d/%d]Bytes\r\n", 
+				header.len, size);
+	/*Handle Package*/
+	SDEBUGOUT("RQUEST:\r\nwtag=%d\r\nctrid=%d\r\naddr=%d\r\nlen=%d\r\nwlun=%d\r\n", 
+			header.wtag, header.ctrid, header.addr, header.len, header.wlun);
+
+	switch(header.ctrid){
+		case SCSI_READ:
+			return usStorage_diskREAD(&header);
+			break;
+		case SCSI_WRITE:		
+			return usStorage_diskWRITE(buffer, size, &header);
+			break;
+		case SCSI_INQUIRY:
+			return usStorage_diskINQUIRY(&header);
+			break;
+		case SCSI_GET_LUN:
+			return usStorage_diskLUN(&header);
+			break;
+		case SCSI_FIRMWARE_INFO:
+			return usStorage_firmwareINFO(&header);
+			break;
+		default:
+			SDEBUGOUT("Unhandle Command\r\n");
+	}
+
+	return 0;
+}
+
+
+/*****************************************************************************
+ * Public functions
+ ****************************************************************************/
+
+#if defined(NXP_CHIP_18XX)
+/** Main program entry point. This routine configures the hardware required by the application, then
+ *  calls the filesystem function to read files from USB Disk
+ *Ustorage Project by Szitman 20161022
+ */
+void vs_main_disk(void *pvParameters)
+{
+	while(1){
+		while (USB_HostState[NXP_USB_DISK] != HOST_STATE_Configured) {
+			USB_USBTask(NXP_USB_DISK, USB_MODE_Host);
+			continue;
+		}		
+		vTaskDelay(100);
+	}
+}
+
+void vs_main(void *pvParameters)
+{
+	SetupHardware();
+
+	SDEBUGOUT("U-Storage Running.\r\n");
+	xTaskCreate(vs_main_disk, "vTaskDisk", 1024,
+			NULL, (tskIDLE_PRIORITY + 2UL), (TaskHandle_t *) NULL);
+
+	while(1){
+		if (USB_HostState[NXP_USB_PHONE] != HOST_STATE_Configured) {
+			USB_USBTask(NXP_USB_PHONE, USB_MODE_Host);
+			continue;
+		}
+		/*Connect Phone Device*/
+		if(usProtocol_ConnectPhone()){
+			/*Connect to Phone Failed*/
+			vTaskDelay(200);
+			continue;
+		}
+		usStorage_Handle();
+	}
+}
+
+
+/** Event handler for the USB_DeviceAttached event. This indicates that a device has been attached to the host, and
+ *  starts the library USB task to begin the enumeration and USB management process.
+ */
+void EVENT_USB_Host_DeviceAttached(const uint8_t corenum)
+{
+	if(corenum == NXP_USB_DISK){
+		SDEBUGOUT(("Disk Attached on port %d\r\n"), corenum);	
+	}else{
+		SDEBUGOUT(("Phone Attached on port %d\r\n"), corenum);	
+	}
+}
+
+/** Event handler for the USB_DeviceUnattached event. This indicates that a device has been removed from the host, and
+ *  stops the library USB task management process.
+ */
+void EVENT_USB_Host_DeviceUnattached(const uint8_t corenum)
+{
+	SDEBUGOUT(("\r\nDevice Unattached on port %d\r\n"), corenum);
+	memset(&(UStorage_Interface[corenum].State), 0x00, sizeof(UStorage_Interface[corenum].State));
+	if(corenum == NXP_USB_DISK){
+		usDisk_DeviceDisConnect();
+	}else{
+		usProtocol_DeviceDisConnect();
+	}
+}
+
+/** Event handler for the USB_DeviceEnumerationComplete event. This indicates that a device has been successfully
+ *  enumerated by the host and is now ready to be used by the application.
+ */
+void EVENT_USB_Host_DeviceEnumerationComplete(const uint8_t corenum)
+{
+	if(corenum == NXP_USB_DISK){
+		SDEBUGOUT(("Disk Enumeration on port %d\r\n"), corenum);
+		usDisk_DeviceDetect(&UStorage_Interface[corenum]);
+	}else if(corenum == NXP_USB_PHONE){
+		SDEBUGOUT(("Phone Enumeration on port %d\r\n"), corenum);
+		usProtocol_DeviceDetect(&UStorage_Interface[corenum]);	
+	}else{
+		SDEBUGOUT("Unknown USB Port %d.\r\n", corenum);
+	}
+}
+/** Event handler for the USB_HostError event. This indicates that a hardware error occurred while in host mode. */
+void EVENT_USB_Host_HostError(const uint8_t corenum, const uint8_t ErrorCode)
+{
+	USB_Disable(corenum, USB_MODE_Host);
+
+	SDEBUGOUT(("Host Mode Error\r\n"
+			  " -- Error port %d\r\n"
+			  " -- Error Code %d\r\n" ), corenum, ErrorCode);
+
+	die(0);
+}
+
+/** Event handler for the USB_DeviceEnumerationFailed event. This indicates that a problem occurred while
+ *  enumerating an attached USB device.
+ */
+void EVENT_USB_Host_DeviceEnumerationFailed(const uint8_t corenum,
+											const uint8_t ErrorCode,
+											const uint8_t SubErrorCode)
+{
+	SDEBUGOUT(("Dev Enum Error\r\n"
+			  " -- Error port %d\r\n"
+			  " -- Error Code %d\r\n"
+			  " -- Sub Error Code %d\r\n"
+			  " -- In State %d\r\n" ),
+			 corenum, ErrorCode, SubErrorCode, USB_HostState[corenum]);
+
+}
+#elif defined(LINUX)
+
+#define UEVENT_BUFFER_SIZE		2048
+#define UEVENT_NUM_ENVP			32
+#ifndef NETLINK_KOBJECT_UEVENT
+#define NETLINK_KOBJECT_UEVENT	15
+#endif
+#define STOR_SUBSYS				"block"
+#define STOR_DEVTYPE			"disk"
+#define STOR_STR_ADD			"add"
+#define STOR_STR_REM			"remove"
+#define STOR_STR_CHANGE		"change"
+#define PHONE_SUBSYS				"usb"
+#define PHONE_DEVTYPE			"usb_device"
+
+struct udevd_uevent_msg {
+	unsigned char id;
+	char *action;
+	char *devpath;
+	char *subsystem;	
+	char *devname;
+	char *devtype;
+	dev_t devt;
+	unsigned long long seqnum;
+	unsigned int timeout;
+	char *envp[UEVENT_NUM_ENVP+1];
+	char envbuf[];
+};
+
+typedef struct usbStatus{
+	volatile uint8_t usbPhoneStatus; /*0: phone not plug 1:phone plug*/
+	volatile uint32_t usbSendCount; /*0:Usb sending ok  1:Usb sending pending*/
+	volatile uint8_t usbDiskStatus;
+}usbStatus;
+
+typedef enum{
+	notifyNONE,
+	notifyADD,
+	notifyREM
+}plugStatus;
+
+usbStatus usbLinux;
+
+void notify_set_action(uint8_t action)
+{
+	usbLinux.usbDiskStatus = action;
+}
+
+uint8_t notify_get_action(void)
+{
+	return usbLinux.usbDiskStatus;
+}
+
+void notify_plug(uint8_t action)
+{
+	struct scsi_head header;
+	static uint32_t wtag = 0;
+
+	if(action == notifyNONE){
+		return;
+	}
+
+	header.head = SCSI_DEVICE_MAGIC;
+	if(action == notifyADD){
+		header.ctrid = SCSI_INPUT;
+	}else{
+		header.ctrid = SCSI_OUTPUT;
+	}
+
+	header.wtag = wtag++;
+	header.len = 1;
+
+	usStorage_sendHEAD(&header);
+}
+
+static int storage_init_netlink_sock(void)
+{
+	struct sockaddr_nl snl;
+	int retval, sockfd = -1;
+
+	memset(&snl, 0x00, sizeof(struct sockaddr_nl));
+	snl.nl_family = AF_NETLINK;
+	snl.nl_pid = getpid();
+	snl.nl_groups = 1;
+
+	sockfd = socket(PF_NETLINK, SOCK_DGRAM, NETLINK_KOBJECT_UEVENT);
+	if (sockfd == -1) {
+		SDEBUGOUT("error getting socket: %s\r\n", strerror(errno));
+		return -1;
+	}
+	retval = bind(sockfd, (struct sockaddr *) &snl,
+		      sizeof(struct sockaddr_nl));
+	if (retval < 0) {
+		SDEBUGOUT("bind failed: %s\r\n", strerror(errno));
+		close(sockfd);
+		return -1;
+	}
+
+	return sockfd;
+}
+
+static struct udevd_uevent_msg *get_msg_from_envbuf(const char *buf, int buf_size)
+{
+	int bufpos;
+	int i;
+	struct udevd_uevent_msg *msg;
+	int maj = 0;
+	int min = 0;
+
+	msg = malloc(sizeof(struct udevd_uevent_msg) + buf_size);
+	if (msg == NULL)
+		return NULL;
+	memset(msg, 0x00, sizeof(struct udevd_uevent_msg) + buf_size);
+
+	/* copy environment buffer and reconstruct envp */
+	memcpy(msg->envbuf, buf, buf_size);
+	bufpos = 0;
+	for (i = 0; (bufpos < buf_size) && (i < UEVENT_NUM_ENVP-2); i++) {
+		int keylen;
+		char *key;
+
+		key = &msg->envbuf[bufpos];
+		keylen = strlen(key);
+		msg->envp[i] = key;
+		bufpos += keylen + 1;
+		SDEBUGOUT( "add '%s' to msg.envp[%i]\r\n", msg->envp[i], i);
+
+		/* remember some keys for further processing */
+		if (strncmp(key, "ACTION=", 7) == 0)
+			msg->action = &key[7];
+		else if (strncmp(key, "DEVPATH=", 8) == 0)
+			msg->devpath = &key[8];
+		else if (strncmp(key, "SUBSYSTEM=", 10) == 0)
+			msg->subsystem = &key[10];		
+		else if (strncmp(key, "DEVNAME=", 8) == 0)
+			msg->devname = &key[8];
+		else if (strncmp(key, "DEVTYPE=", 8) == 0)
+			msg->devtype = &key[8];		
+		else if (strncmp(key, "SEQNUM=", 7) == 0)
+			msg->seqnum = strtoull(&key[7], NULL, 10);
+		else if (strncmp(key, "MAJOR=", 6) == 0)
+			maj = strtoull(&key[6], NULL, 10);
+		else if (strncmp(key, "MINOR=", 6) == 0)
+			min = strtoull(&key[6], NULL, 10);
+		else if (strncmp(key, "TIMEOUT=", 8) == 0)
+			msg->timeout = strtoull(&key[8], NULL, 10);
+	}
+	msg->devt = makedev(maj, min);
+	msg->envp[i++] = "UDEVD_EVENT=1";
+	msg->envp[i] = NULL;
+
+	if (msg->devpath == NULL || msg->action == NULL) {
+		SDEBUGOUT("DEVPATH or ACTION missing, ignore message\r\n");
+		free(msg);
+		return NULL;
+	}
+	return msg;
+}
+
+static int storage_handle_diskplug(struct udevd_uevent_msg *msg)
+{
+	int countTime = 0;
+	uint32_t sendCount=0;
+	uint8_t diskPlug;
+	if(!msg){
+		return -1;
+	}
+#define COUNT_TIME		10	
+	/*handle event*/
+	if(!strcasecmp(msg->action, STOR_STR_ADD)){
+		char devbuf[128] = {0};
+		int fd = -1;
+
+		sprintf(devbuf, "/dev/%s", msg->devname);
+		if(access(devbuf, F_OK)){
+			mknod(devbuf, S_IFBLK|0644, msg->devt);
+		}
+		/*Check dev can open*/
+		if((fd = open(devbuf, O_RDONLY)) < 0){
+			SDEBUGOUT("Open [%s] Failed:%s\r\n", 
+					devbuf, strerror(errno));
+			return 0;
+		}else{
+			close(fd);
+		}
+		/*preread*/
+		SDEBUGOUT("ADD Device %d [%s/%s] To Storage List\r\n", 
+				msg->id, msg->devname,  msg->devpath);
+		notify_set_action(notifyADD);
+		usDisk_DeviceDetect((void*)devbuf);
+	}else if(!strcasecmp(msg->action, STOR_STR_REM)){
+		SDEBUGOUT("Remove Device [%s/%s] From Storage List\r\n", 
+					 msg->devname,  msg->devpath);				
+		notify_set_action(notifyREM);
+		usDisk_DeviceDisConnect();
+	}else if(!strcasecmp(msg->action, STOR_STR_CHANGE)){		
+		char devbuf[128] = {0};		
+		int fd = -1;		
+		
+		SDEBUGOUT("Try To Handle Device %s [%s/%s] Event\r\n", 
+					msg->action, msg->devname,  msg->devpath);
+		sprintf(devbuf, "/dev/%s", msg->devname);
+		if(access(devbuf, F_OK)){
+			mknod(devbuf, S_IFBLK|0644, msg->devt);
+		}
+		/*Check dev can open*/
+		if((fd = open(devbuf, O_RDONLY)) < 0){
+			/*Remove ID*/
+			SDEBUGOUT("We Think it may be Remove action[%s]\r\n", msg->devname);
+			notify_set_action(notifyREM);			
+			usDisk_DeviceDisConnect();
+		}else{
+			close(fd);			
+			SDEBUGOUT("We Think it may be Add action[%s]\r\n", msg->devname);
+			notify_set_action(notifyADD);			
+			usDisk_DeviceDetect((void*)devbuf);
+		}		
+	}else{
+		SDEBUGOUT("Unhandle Device %s [%s/%s] Event\r\n",
+				msg->action, msg->devname,	msg->devpath);
+		return 0;
+	}
+	/*confirm try to send to peer wait 500ms*/
+	sendCount = usbLinux.usbSendCount;
+	while(countTime++ < COUNT_TIME){
+		if(usbLinux.usbSendCount != sendCount &&
+				notify_get_action() == notifyNONE){
+			SDEBUGOUT("Main Thread Notify Disk %s [%s/%s] Event\r\n",
+					msg->action, msg->devname, msg->devpath);
+			return 0;
+		}
+		usleep(50000);
+	}
+	/*May be block receive, we need to notify to peer*/
+	diskPlug = usbLinux.usbDiskStatus;
+	usbLinux.usbDiskStatus = notifyNONE;
+	notify_plug(diskPlug);
+	
+	SDEBUGOUT("Plug Thread Notify Disk %s [%s/%s] Event\r\n",
+			msg->action, msg->devname, msg->devpath);
+
+	return 0;
+}
+
+static int storage_handle_phoneplug(struct udevd_uevent_msg *msg)
+{
+	if(!msg){
+		return -1;
+	}
+	
+	if(!strcasecmp(msg->action, STOR_STR_ADD)){
+		/*Add phone*/
+		if(usbLinux.usbPhoneStatus == 1){
+			SDEBUGOUT("Phone Have Been PlugIN %s [%s/%s] Event\r\n",
+					msg->action, msg->devname, msg->devpath);
+			usbLinux.usbPhoneStatus = 0;
+		}		
+		usProtocol_DeviceDisConnect();
+		usbLinux.usbPhoneStatus = 1;
+		SDEBUGOUT("Phone PlugIN %s [%s/%s] Event\r\n",
+				msg->action, msg->devname, msg->devpath);		
+	}else if(!strcasecmp(msg->action, STOR_STR_REM)){
+		usbLinux.usbPhoneStatus = 0;
+		SDEBUGOUT("Phone PlugOUT %s [%s/%s] Event\r\n",
+				msg->action, msg->devname, msg->devpath);		
+	}else{
+		SDEBUGOUT("Phone Not Handle %s [%s] Event\r\n",
+				msg->action,  msg->devpath);		
+	}
+
+	return 0;
+}
+
+static int storage_action_handle(int sockfd)
+{
+	char buffer[UEVENT_BUFFER_SIZE*2] = {0};
+	struct udevd_uevent_msg *msg;
+	int bufpos; 
+	ssize_t size;
+	char *pos = NULL;
+
+	size = recv(sockfd, &buffer, sizeof(buffer), 0);
+	if (size <= 0) {
+		SDEBUGOUT("error receiving uevent message: %s\r\n", strerror(errno));
+		return -1;
+	}
+	if ((size_t)size > sizeof(buffer)-1)
+		size = sizeof(buffer)-1;
+	buffer[size] = '\0';
+	/* start of event payload */
+	bufpos = strlen(buffer)+1;
+	msg = get_msg_from_envbuf(&buffer[bufpos], size-bufpos);
+	if (msg == NULL)
+		return -1;
+
+	/* validate message */
+	pos = strchr(buffer, '@');
+	if (pos == NULL) {
+		SDEBUGOUT("Invalid uevent '%s'\r\n", buffer);
+		free(msg);
+		return -1;
+	}
+	pos[0] = '\0';
+	if (msg->action == NULL) {
+		SDEBUGOUT("no ACTION in payload found, skip event '%s'\r\n", buffer);
+		free(msg);
+		return -1;
+	}
+
+	if (strcmp(msg->action, buffer) != 0) {
+		SDEBUGOUT("ACTION in payload does not match uevent, skip event '%s'\r\n", buffer);
+		free(msg);
+		return -1;
+	}
+	if(!msg->subsystem || !msg->devtype){
+		SDEBUGOUT("Subsystem/Devtype mismatch [%s/%s]\r\n", 
+				msg->subsystem, msg->devtype);
+		free(msg);
+		return 0;
+	}
+	if(!strcasecmp(msg->subsystem, STOR_SUBSYS) &&
+			!strcasecmp(msg->devtype, STOR_DEVTYPE)){
+		storage_handle_diskplug(msg);
+	}else if(!strcasecmp(msg->subsystem, PHONE_SUBSYS) &&
+				!strcasecmp(msg->devtype, PHONE_DEVTYPE)){
+		SDEBUGOUT("Phone Detect [%s/%s]\r\n", 
+						msg->devname,  msg->devpath);
+		storage_handle_phoneplug(msg);
+	}else{
+		SDEBUGOUT("Unhandle DevicePlug %s [%s/%s] Event\r\n",
+				msg->action, msg->devname,	msg->devpath);
+	}
+
+	free(msg);
+	return 0;
+}
+
+static int handler_sig(void)
+{
+	struct sigaction act;
+	memset(&act, 0, sizeof(struct sigaction));
+	act.sa_handler = SIG_IGN;
+	sigfillset(&act.sa_mask);
+	if ((sigaction(SIGCHLD, &act, NULL) == -1) ||
+		(sigaction(SIGTERM, &act, NULL) == -1) ||
+		(sigaction(SIGSEGV, &act, NULL) == -1)) {
+		SDEBUGOUT("Fail to sigaction[Errmsg:%s]\r\n", strerror(errno));	
+	}
+
+	act.sa_handler = SIG_IGN;
+	if (sigaction(SIGPIPE, &act, NULL) == -1) {		
+		SDEBUGOUT("Fail to signal(SIGPIPE)[Errmsg:%s]\r\n", strerror(errno));	
+	}
+	return 0;
+}
+
+static int daemonize(void)
+{
+	pid_t pid;
+	pid_t sid;
+
+	// already a daemon
+	if (getppid() == 1)
+		return 0;
+
+	pid = fork();
+	if (pid < 0) {
+		SDEBUGOUT("fork() failed.\r\n");
+		return pid;
+	}
+
+	if (pid > 0) {
+		// exit parent process
+		exit(0);
+	}
+	
+	// Create a new SID for the child process
+	sid = setsid();
+	if (sid < 0) {
+		SDEBUGOUT("setsid() failed.\r\n");
+		return -1;
+	}
+
+	pid = fork();
+	if (pid < 0) {
+		SDEBUGOUT("fork() failed (second).\r\n");
+		return pid;
+	}
+
+	if (pid > 0) {
+		// exit parent process
+		exit(0);
+	}
+
+	// Change the current working directory.
+	if ((chdir("/")) < 0) {
+		SDEBUGOUT("chdir() failed\r\n");
+		return -2;
+	}
+	// Redirect standard files to /dev/null
+	if (!freopen("/dev/null", "r", stdin)) {
+		SDEBUGOUT("Redirection of stdin failed.\r\n");
+		return -3;
+	}
+	if (!freopen("/dev/null", "w", stdout)) {
+		SDEBUGOUT("Redirection of stdout failed.\r\n");
+		return -3;
+	}
+
+	return 0;
+}
+
+void* vs_main_disk(void *pvParameters)
+{
+	int plugSocket = 0, cnt;
+	struct pollfd fds;
+	
+	usDisk_DeviceInit(NULL);
+	while(1){
+		if(plugSocket <= 0 && 
+				(plugSocket = storage_init_netlink_sock()) < 0){
+			usleep(200000);
+			continue;
+		}
+		fds.fd = plugSocket;
+		fds.events = POLLIN;
+		cnt = poll(&fds, 1, -1);
+		if(cnt < 0){
+			if(cnt == -1 && errno == EINTR){
+				continue;
+			}else{
+				SDEBUGOUT("POLL Error:%s.\r\n", strerror(errno));
+				usleep(200000);
+				continue;
+			}
+		}else if(cnt == 0){
+			/*timeout*/
+			continue;
+		}
+		if(fds.revents & POLLIN){
+			/*receive plug information*/
+			storage_action_handle(plugSocket);
+		}
+	}
+
+	return NULL;
+}
+int main(int argc, char **argv)
+{
+	pthread_t diskThread;
+	uint8_t phoneStatus, diskStatus;
+	
+	SDEBUGOUT("U-Storage Running.\r\n");
+
+	if(argc <= 1){
+		daemonize();
+		handler_sig();
+	}
+	memset(&usbLinux, 0, sizeof(usbStatus));
+	if (pthread_create(&diskThread, NULL, vs_main_disk, NULL) != 0) {
+		SDEBUGOUT("ERROR: Could not start disk thread!\r\n");
+		return -1;
+	}
+	
+	while(1){
+		phoneStatus = usbLinux.usbPhoneStatus;
+		if (phoneStatus && usProtocol_DeviceDetect(NULL)) {
+			SDEBUGOUT("Detect Phone Failed.\r\n");
+			usleep(200000);
+			continue;
+		}else if(!phoneStatus){			
+			SDEBUGOUT("Wait Phone Plug IN.\r\n");
+			usleep(500000);
+			continue;			
+		}
+		/*Connect Phone Device*/
+		if(usProtocol_ConnectPhone()){
+			/*Connect to Phone Failed*/
+			usleep(300000);
+			continue;
+		}
+		
+		if(usStorage_Handle() == PROTOCOL_DISCONNECT){			
+			SDEBUGOUT("Destory USB Resource.\r\n");
+			usbLinux.usbPhoneStatus = 0;
+			usProtocol_DeviceDisConnect();
+			continue;
+		}
+		diskStatus = usbLinux.usbDiskStatus;
+		if(diskStatus != notifyNONE){
+			notify_plug(diskStatus);
+			usbLinux.usbDiskStatus = notifyNONE;
+		}
+
+		if(usbLinux.usbSendCount++ == 0xFFFFFFFF){
+			usbLinux.usbSendCount = 0;
+		}
+	}
+}
+#endif //#if defined(NXP_CHIP_18XX)
+
+#if defined(NXP_CHIP_18XX)
+#pragma arm section code, rwdata
+#endif 
+
+
