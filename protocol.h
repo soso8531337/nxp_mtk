@@ -89,8 +89,9 @@ typedef struct acessory_parameter
 	char model_name[32];
 	char sn[32];
 	char fw_version[16];
-	char hw_version[16];	
-	char license[128];
+	char hw_version[16];
+	char cardid[8];
+	char license[120];
 }__attribute__((__packed__))vs_acessory_parameter;
 
 #endif

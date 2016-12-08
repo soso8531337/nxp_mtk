@@ -36,6 +36,7 @@
 #include "usDisk.h"
 #include "usProtocol.h"
 #include "usSys.h"
+#include "usFirmware.h"
 #if defined(NXP_CHIP_18XX)
 #include "fsusb_cfg.h"
 #include "FreeRTOS.h"
@@ -690,42 +691,6 @@ static int usStorage_diskLUN(struct scsi_head *header)
 	return 0;
 }
 
-static int usStorage_firmwareINFO(struct scsi_head *header)
-{
-	vs_acessory_parameter dinfo;	
-	int flen = sizeof(vs_acessory_parameter);
-	uint8_t *buffer = NULL, rc = 0;
-	uint32_t size = 0, total = 0;
-
-	if(usProtocol_GetAvaiableBuffer((void **)&buffer, &size)){
-		SDEBUGOUT("usProtocol_GetAvaiableBuffer Failed\r\n");
-		return 1;
-	}	
-	SDEBUGOUT("AvaiableBuffer 0x%p[%dBytes]\r\n", buffer, size);
-	
-	total = sizeof(struct scsi_head);
-	memcpy(buffer, header, total);
-	memset(&dinfo, 0, sizeof(vs_acessory_parameter));
-	strcpy(dinfo.fw_version, "1.0");
-	strcpy(dinfo.hw_version, "1.0");
-	strcpy(dinfo.manufacture, "szitman");
-	strcpy(dinfo.model_name, "nxp");
-	strcpy(dinfo.sn, "1234567890");
-	strcpy(dinfo.license, "1234567890");
-	memcpy(buffer+total, &dinfo, flen);
-	total += flen;
-	
-	if((rc = usProtocol_SendPackage(buffer, total))){
-		SDEBUGOUT("usProtocol_SendPackage Failed\r\n");
-		return rc;
-	}
-	SDEBUGOUT("usStorage_firmwareINFO Successful Firmware Info:\r\nVendor:%s\r\nProduct:%s\r\nVersion:%s\r\nSerical:%s\r\nLicense:%s\r\n", 
-					dinfo.manufacture, dinfo.model_name, dinfo.fw_version, dinfo.sn, dinfo.license);
-	
-	return 0;
-}
-
-
 static int usStorage_Handle(void)
 {	
 	uint8_t *buffer;
@@ -765,11 +730,18 @@ static int usStorage_Handle(void)
 		case SCSI_GET_LUN:
 			return usStorage_diskLUN(&header);
 			break;
+		case SCSI_UPDATE_START:
+		case SCSI_UPDATE_DATA:
+		case SCSI_UPDATE_END:
+			return usStorage_firmwareUP(buffer, size);
+			break;
 		case SCSI_FIRMWARE_INFO:
 			return usStorage_firmwareINFO(&header);
 			break;
 		default:
-			SDEBUGOUT("Unhandle Command\r\n");
+			SDEBUGOUT("Unhandle Command\r\nheader:%x\r\nwtag:%d\r\n"
+						"ctrid:%d\r\naddr:%u\r\nlen:%d\r\nwlun:%d\r\n", header.head,
+						header.wtag, header.ctrid, header.addr, header.len, header.wlun);
 	}
 
 	return 0;
@@ -1056,6 +1028,12 @@ static int storage_handle_diskplug(struct udevd_uevent_msg *msg)
 		return -1;
 	}
 #define COUNT_TIME		10	
+
+	if(strncmp(msg->devname, "sd", 2) &&
+			strncmp(msg->devname, "mmcblk", 6)){
+		SDEBUGOUT("Unknown Disk [%s]\r\n", msg->devname);
+		return -1;
+	}
 	/*handle event*/
 	if(!strcasecmp(msg->action, STOR_STR_ADD)){
 		char devbuf[128] = {0};

@@ -697,6 +697,45 @@ static uint8_t LINUX_BlukPacketReceive(usb_device *usbdev, uint8_t *buffer,
 
 	return rc?USB_REGEN:USB_REOK;
 }
+
+static uint8_t LINUX_BlukPacketReceiveTmout(usb_device *usbdev, uint8_t *buffer, 
+															uint32_t length, uint32_t *actual_length, int timeout)
+{
+	int8_t rc;
+	int transferred = 0;
+
+	if(!usbdev || !buffer || !actual_length){
+		return USB_REGEN;
+	}
+	rc = libusb_bulk_transfer((struct libusb_device_handle *)(usbdev->os_priv),
+							usbdev->ep_in,
+							buffer,
+							length,
+							&transferred,
+							timeout);
+	if(rc < 0){
+			if (rc  == LIBUSB_ERROR_TIMEOUT){
+				USBDEBUG("LIBUSB Receive Timeout\n");
+				return USB_TMOUT;
+			}else if(rc == LIBUSB_ERROR_NO_DEVICE){
+				USBDEBUG("Device OffLine....\n");				
+				return USB_DISCNT;
+			}else if(rc == LIBUSB_ERROR_OVERFLOW){
+				USBDEBUG("LIBUSB OverFlow[%p/%d/%dBytes]....\n", 
+							buffer, length, transferred);
+			}else{
+				USBDEBUG("LIBUSB bulk transfer error %d\n", rc);
+			}
+			return USB_RETRANS;
+	}
+	
+	*actual_length = transferred;
+	USBDEBUG("LIBUSB Receive %u/%d.\r\n", *actual_length, length);
+
+	return rc?USB_REGEN:USB_REOK;
+}
+
+
 static uint8_t LINUX_GetDeviceDescriptor(usb_device *usbdev, USB_StdDesDevice_t *DeviceDescriptorData)
 {
 	libusb_device_handle *dev_handle;
@@ -849,6 +888,17 @@ uint8_t usUsb_BlukPacketReceive(usb_device *usbdev, uint8_t *buffer,
 	return NXP_BlukPacketReceive(usbdev, buffer, length, actual_length);
 #elif defined(LINUX)
 	return LINUX_BlukPacketReceive(usbdev, buffer, length, actual_length);
+#endif
+
+}
+
+uint8_t usUsb_BlukPacketReceiveTmout(usb_device *usbdev, uint8_t *buffer, 
+															uint32_t length, uint32_t *actual_length, int timeout)
+{
+#if defined(NXP_CHIP_18XX)
+	return NXP_BlukPacketReceive(usbdev, buffer, length, actual_length);
+#elif defined(LINUX)
+	return LINUX_BlukPacketReceiveTmout(usbdev, buffer, length, actual_length, timeout);
 #endif
 
 }

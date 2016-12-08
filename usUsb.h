@@ -174,6 +174,7 @@ enum{
 	USB_REOK=0,
 	USB_REPARA,
 	USB_REGEN,
+	USB_TMOUT,
 	USB_DISCNT,
 	USB_RETRANS
 };
@@ -205,6 +206,8 @@ uint8_t usUsb_BlukPacketSend(usb_device *usbdev, uint8_t *buffer,
 															const uint32_t length, uint32_t *actual_length);
 uint8_t usUsb_BlukPacketReceive(usb_device *usbdev, uint8_t *buffer, 
 															uint32_t length, uint32_t *actual_length);
+uint8_t usUsb_BlukPacketReceiveTmout(usb_device *usbdev, uint8_t *buffer, 
+															uint32_t length, uint32_t *actual_length, int timeout);
 uint8_t usUsb_BlukPacketReceiveStream(usb_device *usbdev, uint8_t *buffer, 
 															uint32_t length, uint32_t *actual_length);
 uint8_t usUsb_GetDeviceDescriptor(usb_device *usbdev, USB_StdDesDevice_t *DeviceDescriptorData);

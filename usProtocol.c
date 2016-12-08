@@ -471,6 +471,70 @@ static int receive_ack(mux_itunes *uSdev)
 	return PROTOCOL_REOK;
 }
 
+static void resetReceive(void)
+{
+	uint8_t rc;
+	
+	if(uSinfo.usType == PRO_IOS){
+		mux_itunes *uSdev = &(uSinfo.itunes);
+		int mux_header_size = ((uSdev->version < 2) ? 8 : sizeof(struct mux_header));
+		
+		while(uSdev->tcpinfo.rx_ack != uSdev->tcpinfo.tx_seq){
+			uint8_t rstbuf[MPACKET_SIZE] = {0};
+			uint32_t actual_length;			
+			struct tcphdr *th;
+			
+			PRODEBUG("Reset Opeartion Need To receive RX_ACK[%u<--->%u]\r\n", 
+							uSdev->tcpinfo.rx_ack, uSdev->tcpinfo.tx_seq);
+			if((rc = usUsb_BlukPacketReceiveTmout(&(uSdev->usbdev), rstbuf, 
+									uSdev->usbdev.wMaxPacketSize, &actual_length, 1000))){
+				if(rc == USB_DISCNT){
+					PRODEBUG("Device Disconncet\r\n");
+					break;
+				}else if(rc == USB_TMOUT){
+					PRODEBUG("Reset Receive Package Finish[%d]\r\n", rc);
+				}	
+				break;
+			}
+			struct mux_header *mhdr =  (struct mux_header *)rstbuf;
+			if (uSdev->version >= 2) {
+				uSdev->rx_seq = ntohs(mhdr->rx_seq);
+			}
+			if(actual_length < mux_header_size + sizeof(struct tcphdr)){
+				PRODEBUG("Receive ios Package is Too Small TCP Packet[%d/%d]\r\n", 
+											actual_length, mux_header_size);
+				break;
+			}
+			uSdev->protlen = ntohl(mhdr->length);
+			if(actual_length >= uSdev->protlen){
+				PRODEBUG("Fix IOS Receive Packet[%d--->%d]\r\n", 
+											actual_length, uSdev->protlen); 		
+				uSdev->prohlen = uSdev->protlen;
+			}else{
+				uSdev->prohlen= actual_length;
+			}
+			/*We need to decode tcp header*/			
+			th = (struct tcphdr *)((char*)mhdr+mux_header_size);
+
+			uSdev->tcpinfo.rx_seq = ntohl(th->th_seq);
+			uSdev->tcpinfo.rx_ack = ntohl(th->th_ack);
+			uSdev->tcpinfo.rx_win = ntohs(th->th_win) << 8;
+			PRODEBUG("[IN][RESET]sport=%d dport=%d seq=%d ack=%d flags=0x%x window=%d[%d]len=%u\r\n",
+						ntohs(th->th_sport), ntohs(th->th_dport),
+						uSdev->tcpinfo.rx_seq, uSdev->tcpinfo.rx_ack, th->th_flags, 
+						uSdev->tcpinfo.rx_win, uSdev->tcpinfo.rx_win >> 8, uSdev->protlen);
+		}
+		memset(&(uSinfo.itunes.tcpinfo), 0, sizeof(uSinfo.itunes.tcpinfo));
+		uSinfo.itunes.tcpinfo.sport = find_sport();
+		uSinfo.itunes.tcpinfo.dport= IOS_DEFAULT_PORT;
+		uSinfo.itunes.tcpinfo.tx_win = IOS_WIN_SIZE;
+		uSinfo.State = CONN_CONNECTING;
+		PRODEBUG("Reset Finish iPhone Device[v/p=%d:%d]\r\n", 
+					uSinfo.VendorID, uSinfo.ProductID); 	
+	}
+	usProtocol_SetconnectPhoneStatus(CONN_CONNECTING);
+}
+
 static uint8_t usProtocol_iosSendPackage(mux_itunes *uSdev, void *buffer, uint32_t size)
 {	
 	uint8_t *tbuffer = (uint8_t *)buffer;
@@ -798,8 +862,8 @@ static uint8_t usProtocol_iosRecvPackage(mux_itunes *uSdev, void **buffer,
 			/*Connection Reset*/
 			PRODEBUG("Connection Reset:\r\n");
 			usUsb_PrintStr(payload, payload_length);
-			usProtocol_SetconnectPhoneStatus(CONN_REFUSED);
-			return PROTOCOL_DISCONNECT;
+			resetReceive();
+			return PROTOCOL_REGEN;
 		}
 		uSdev->prohlen += actual_length;		
 		tbuffer += actual_length;
@@ -1057,9 +1121,10 @@ static uint8_t LINUX_SwitchAOAMode(libusb_device* dev)
 	for(j=0; j<config->bNumInterfaces; j++) {
 		const struct libusb_interface_descriptor *intf = &config->interface[j].altsetting[0];
 		/*We Just limit InterfaceClass, limit InterfaceSubClass may be lost sanxing huawei device*/
-		if(intf->bInterfaceClass != INTERFACE_CLASS_AOA){
+		if(config->bNumInterfaces > 1 &&
+					intf->bInterfaceClass != INTERFACE_CLASS_AOA){
 			continue;
-		}
+		}		
 		/* Now asking if device supports Android Open Accessory protocol */
 		res = libusb_control_transfer(handle,
 					      LIBUSB_ENDPOINT_IN |
@@ -1268,6 +1333,7 @@ uint8_t usProtocol_ConnectIOSPhone(mux_itunes *uSdev)
 	if(usProtocol_GetIOSVersion(uSdev)){
 		return PROTOCOL_REINVAILD;
 	}
+
 	PRODEBUG("Connected to v%d device\r\n", uSdev->version);
 	/*Send TH_SYNC*/
 	if(send_tcp(uSdev, TH_SYN, NULL, 0) < 0){
