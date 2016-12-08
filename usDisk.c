@@ -185,6 +185,7 @@ uint8_t usDisk_DeviceDetect(void *os_priv)
 
 usb_device disk_phone;
 char dev[256];
+int diskFD = -1;
 
 static int disk_chk_proc(char *dev)
 {
@@ -333,7 +334,14 @@ uint8_t usDisk_DeviceDetect(void *os_priv)
 	if(blockdev_readahead(dev, BLKRASIZE) <  0){
 		DSKDEBUG("SetReadAhead %s Failed\r\n", dev);
 	}
-	
+	/*open diskFD*/
+	close(diskFD);
+	diskFD = open(dev, O_RDWR);
+	if(diskFD < 0){
+			DSKDEBUG("Open diskFD %s Failed\r\n", dev);
+	}
+	DSKDEBUG("Open diskFD %s %d Successful\r\n", dev, diskFD);
+
 	dev_fd= open(dev, O_RDWR | O_NONBLOCK);
 	if (dev_fd < 0 && errno == EROFS)
 		dev_fd = open(dev, O_RDONLY | O_NONBLOCK);
