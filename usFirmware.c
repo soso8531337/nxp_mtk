@@ -593,7 +593,7 @@ sndRes:
 int usStorage_firmwareUP(uint8_t *buffer, uint32_t recvSize)
 {
 	static int fd = -1;
-	struct scsi_head *scsi;	
+	struct scsi_head scsi;	
 	uint8_t headbuf[PRO_HDR] = {0};	
 	uint32_t hSize = recvSize;
 
@@ -601,8 +601,9 @@ int usStorage_firmwareUP(uint8_t *buffer, uint32_t recvSize)
 		FRIMDEBUG("Frimware Request Error\r\n");
 		return -1;
 	}
-	scsi = (struct scsi_head *)buffer;
-	if(scsi->ctrid == SCSI_UPDATE_START){
+	/*We must save the header in var*/
+	memcpy(&scsi, buffer, PRO_HDR);
+	if(scsi.ctrid == SCSI_UPDATE_START){
 		FRIMDEBUG("Prepare To update Firmware\r\n");		
 		close(fd);
 		fd = open(USTORAGE_UPPATH, 
@@ -610,18 +611,18 @@ int usStorage_firmwareUP(uint8_t *buffer, uint32_t recvSize)
 		if(fd < 0){
 			FRIMDEBUG("Open %s Failed:%s\r\n", 
 					USTORAGE_UPPATH, strerror(errno));
-			scsi->relag = 1;
+			scsi.relag = 1;
 		}else{
 			FRIMDEBUG("Open %s Successful:%d", 
 				USTORAGE_UPPATH, fd);
 		}
-	}else if(scsi->ctrid == SCSI_UPDATE_DATA){
+	}else if(scsi.ctrid == SCSI_UPDATE_DATA){
 		uint8_t *payload = buffer+SCSI_HEAD_SIZE;
 		uint32_t paySize, curSize = 0;
 		
 		if(fd < 0){
 			FRIMDEBUG("%s Not Open\r\n", USTORAGE_UPPATH);
-			scsi->relag = 1;
+			scsi.relag = 1;
 			goto sndRes;
 		}
 		paySize= recvSize-PRO_HDR;
@@ -632,35 +633,37 @@ int usStorage_firmwareUP(uint8_t *buffer, uint32_t recvSize)
 			}
 			curSize += paySize;
 		}
-		while(curSize < scsi->len){
+		while(curSize < scsi.len){
 			uint8_t *pbuffer = NULL;
 			if(usProtocol_RecvPackage((void **)&pbuffer, hSize, &paySize)){
 				FRIMDEBUG("usProtocol_RecvPackage Failed IN Firmware\r\n");
 				/*Write to Phone*/
-				scsi->relag = 1;
+				scsi.relag = 1;
 				goto sndRes;
 			}
 			hSize+= paySize;
 			if(writeFirmware(fd, pbuffer, paySize) < 0){
 				goto sndRes;
 			}
+			FRIMDEBUG("Write Firmware %s: %uBytes [PartT:%uBytes/%dBytes]\r\n", 
+							USTORAGE_UPPATH, paySize, curSize, scsi.len);			
 			curSize += paySize;
 		}
 		FRIMDEBUG("Write Firmware %s Successful:%d\r\n", 
 						USTORAGE_UPPATH, curSize);
-	}else if(scsi->ctrid == SCSI_UPDATE_END){
+	}else if(scsi.ctrid == SCSI_UPDATE_END){
 		close(fd);
 		fd = -1;
 		FRIMDEBUG("Check %s MD5\r\n", USTORAGE_UPPATH);
 		return upgradeFirmware(USTORAGE_UPPATH);
 	}else{
-		FRIMDEBUG("unknown Comannd ID:%d\r\n", scsi->ctrid);
-		scsi->relag = 1;
+		FRIMDEBUG("unknown Comannd ID:%d\r\n", scsi.ctrid);
+		scsi.relag = 1;
 	}
 
 sndRes:
 
-	memcpy(headbuf, scsi, PRO_HDR);
+	memcpy(headbuf, &scsi, PRO_HDR);
 	/*Send To Phone*/
 	if(usProtocol_SendPackage(headbuf, PRO_HDR)){
 		FRIMDEBUG("Send To Phone[Just Header Error]\r\n");
