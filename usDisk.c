@@ -163,6 +163,12 @@ uint8_t usDisk_DeviceDetect(void *os_priv)
 	return DISK_REOK;
 }
 
+uint8_t usDisk_DeviceDisConnect(void *os_priv)
+{
+	memset(&uDinfo, 0, sizeof(uDinfo));
+	return DISK_REOK;
+}
+
 #elif defined(LINUX)
 
 #ifndef BLKROSET
@@ -325,6 +331,11 @@ uint8_t usDisk_DeviceDetect(void *os_priv)
 	if(os_priv == NULL){
 		return DISK_REGEN;
 	}
+
+	if(strlen(dev) && strcmp(dev, os_priv)){
+		DSKDEBUG("Not Support Multi Disk:%s/%s\r\n", dev, os_priv);
+		return DISK_REOK;
+	}
 	memset(&uDinfo, 0, sizeof(uDinfo));
 	strcpy(dev, os_priv);
 	disk_phone.os_priv = dev;
@@ -389,19 +400,29 @@ uint8_t usDisk_DeviceDetect(void *os_priv)
 	uDinfo.disk_cap  = (lastblock+1);
 	uDinfo.disk_cap *= blocksize;
 	uDinfo.disknum=1;
-	DSKDEBUG("Disk Blocks = %u BlockSize = %u Disk Capacity=%lld\n", 
+	DSKDEBUG("Disk Blocks = %u BlockSize = %u Disk Capacity=%lld\r\n", 
 			uDinfo.Blocks, uDinfo.BlockSize, uDinfo.disk_cap);
 	close(dev_fd);
 
 	return DISK_REOK;
 }
-#endif
 
-uint8_t usDisk_DeviceDisConnect(void)
+uint8_t usDisk_DeviceDisConnect(void *os_priv)
 {
+	if(!os_priv){
+		return DISK_REPARA;
+	}
+	if(strcmp(uDinfo.diskdev.os_priv, os_priv)){
+		DSKDEBUG("Disk DiskConncect Error: Not Same Disk[%s!=%s]\r\n", 
+				uDinfo.diskdev.os_priv, os_priv);
+		return DISK_REGEN;
+	}
 	memset(&uDinfo, 0, sizeof(uDinfo));
 	return DISK_REOK;
 }
+
+#endif
+
 uint8_t usDisk_DiskReadSectors(void *buff, uint32_t secStart, uint32_t numSec)
 {
 	if(!buff || !uDinfo.disknum){

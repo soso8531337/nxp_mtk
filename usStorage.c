@@ -957,7 +957,8 @@ static int storage_init_netlink_sock(void)
 		close(sockfd);
 		return -1;
 	}
-
+	/*Triger phone*/
+	system("echo add > /sys/bus/usb/devices/usb1/1-1/1-1.2/uevent &");
 	return sockfd;
 }
 
@@ -1058,9 +1059,14 @@ static int storage_handle_diskplug(struct udevd_uevent_msg *msg)
 		usDisk_DeviceDetect((void*)devbuf);
 	}else if(!strcasecmp(msg->action, STOR_STR_REM)){
 		SDEBUGOUT("Remove Device [%s/%s] From Storage List\r\n", 
-					 msg->devname,  msg->devpath);				
-		notify_set_action(notifyREM);
-		usDisk_DeviceDisConnect();
+					 msg->devname,  msg->devpath);		
+		char devbuf[128] = {0};
+		sprintf(devbuf, "/dev/%s", msg->devname);
+		
+		if(usDisk_DeviceDisConnect(devbuf)){			
+			return 0;
+		}		
+		notify_set_action(notifyREM);			
 	}else if(!strcasecmp(msg->action, STOR_STR_CHANGE)){		
 		char devbuf[128] = {0};		
 		int fd = -1;		
@@ -1075,8 +1081,10 @@ static int storage_handle_diskplug(struct udevd_uevent_msg *msg)
 		if((fd = open(devbuf, O_RDONLY)) < 0){
 			/*Remove ID*/
 			SDEBUGOUT("We Think it may be Remove action[%s]\r\n", msg->devname);
+			if(usDisk_DeviceDisConnect(devbuf)){
+				return 0;
+			}			
 			notify_set_action(notifyREM);			
-			usDisk_DeviceDisConnect();
 		}else{
 			close(fd);			
 			SDEBUGOUT("We Think it may be Add action[%s]\r\n", msg->devname);

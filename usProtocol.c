@@ -435,8 +435,8 @@ static int receive_ack(mux_itunes *uSdev)
 	if(!uSdev){
 		return  PROTOCOL_REPARA;
 	}
-	if(usUsb_BlukPacketReceive(&(uSdev->usbdev), buffer, 
-								uSdev->usbdev.wMaxPacketSize, &actual_length)){
+	if(usUsb_BlukPacketReceiveTmout(&(uSdev->usbdev), buffer, 
+								uSdev->usbdev.wMaxPacketSize, &actual_length, 1000)){
 		PRODEBUG("Receive ios Package ACK Error\r\n");
 		return PROTOCOL_REGEN;
 	}
