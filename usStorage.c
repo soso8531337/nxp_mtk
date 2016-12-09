@@ -430,8 +430,7 @@ static int usStorage_diskREAD(struct scsi_head *header)
 static int usStorage_diskWRITE(uint8_t *buffer, uint32_t recvSize, struct scsi_head *header)
 {
 	uint32_t hSize = recvSize;
-	uint32_t paySize, curSize = 0;
-	int32_t addr;	
+	uint32_t paySize, curSize = 0, addr;
 	uint8_t *writePtr = NULL, rc = 0;
 	uint32_t usbWriteBufferLen = 0;
 
@@ -466,10 +465,14 @@ static int usStorage_diskWRITE(uint8_t *buffer, uint32_t recvSize, struct scsi_h
 			header->relag = 1;
 			//usStorage_sendHEAD(header);			
 			return rc;
-		}
+		}		
+		hSize+= paySize;
+
 		while(usbWriteBufferLen < paySize){
 			SDEBUGOUT("Usb Write Buffer Overflow, Write To Disk\r\n");
-			memcpy(writePtr, pbuffer, usbWriteBufferLen);
+			if(usbWriteBufferLen > 0){
+				memcpy(writePtr, pbuffer, usbWriteBufferLen);
+			}
 			if(usDisk_DiskWriteSectors(usbWriteBuffer, addr, USB_WRTESEC)){
 				SDEBUGOUT("REQUEST WRITE Error[addr:%d	SectorCount:%d]\r\n",
 								addr, USB_WRTESEC);
@@ -489,7 +492,10 @@ static int usStorage_diskWRITE(uint8_t *buffer, uint32_t recvSize, struct scsi_h
 		memcpy(writePtr, pbuffer, paySize);
 		writePtr += paySize;
 		usbWriteBufferLen -= paySize;		
-		curSize += paySize;
+		curSize += paySize;		
+		SDEBUGOUT("Usb Write Buffer Save Data:\r\nwritePtr:%p usbWriteBufferLen=%u"
+					" curSize:%u paySize:%u\r\n", writePtr, usbWriteBufferLen, 
+						curSize, paySize);
 	}
 
 	if(usbWriteBufferLen != USB_WRTE &&
@@ -517,7 +523,7 @@ static int usStorage_diskWRITE(uint8_t *buffer, uint32_t recvSize, struct scsi_h
 {
 	uint32_t hSize = recvSize;
 	uint32_t paySize, curSize = 0, secSize = 0, sdivSize = 0;
-	int32_t addr;	
+	uint32_t addr;	
 	uint8_t sector[USDISK_SECTOR] = {0};
 
 	if(!buffer || !header){
@@ -711,6 +717,10 @@ static int usStorage_Handle(void)
 	}
 	/*Must save the header, it will be erase*/
 	memcpy(&header, buffer, PRO_HDR);
+	if(header.head != SCSI_PHONE_MAGIC){
+		PRODEBUG("Package Header Error:0x%x\r\n", header.head);
+		return PROTOCOL_REGEN;
+	}
 	SDEBUGOUT("usProtocol_RecvPackage [%d/%d]Bytes\r\n", 
 				header.len, size);
 	/*Handle Package*/
