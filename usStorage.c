@@ -718,7 +718,7 @@ static int usStorage_Handle(void)
 	/*Must save the header, it will be erase*/
 	memcpy(&header, buffer, PRO_HDR);
 	if(header.head != SCSI_PHONE_MAGIC){
-		PRODEBUG("Package Header Error:0x%x\r\n", header.head);
+		SDEBUGOUT("Package Header Error:0x%x\r\n", header.head);
 		return PROTOCOL_REGEN;
 	}
 	SDEBUGOUT("usProtocol_RecvPackage [%d/%d]Bytes\r\n", 
