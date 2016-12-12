@@ -409,7 +409,7 @@ uint8_t usDisk_DeviceDetect(void *os_priv)
 
 uint8_t usDisk_DeviceDisConnect(void *os_priv)
 {
-	if(!os_priv){
+	if(!os_priv || !uDinfo.diskdev.os_priv){
 		return DISK_REPARA;
 	}
 	if(strcmp(uDinfo.diskdev.os_priv, os_priv)){
