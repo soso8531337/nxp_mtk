@@ -788,23 +788,40 @@ uint8_t LINUX_DiskReadSectors(usb_device *usbdev,
 	int fd;
 	char *devname = (char*)usbdev->os_priv;
 	off_t offset;
+	int already = 0, res, total = 0;
 	
 	fd = open(devname, O_RDWR);
 	if(fd < 0){
 		USBDEBUG("Open %s Error:%s\n", devname, strerror(errno));
 		return USB_REGEN;
 	}	
-	offset = (off_t)secStart *512;	
+	offset = (off_t)secStart *BlockSize;	
 	if(lseek(fd, offset, SEEK_SET) < 0){
 		USBDEBUG("Lseek %s Error:%s\n", devname, strerror(errno));
 		close(fd);
 		return USB_REGEN;
 	}
-	if(read(fd, buff, numSec*BlockSize)< 0){
-		USBDEBUG("Read %s Error:%s\n", devname, strerror(errno));
-		close(fd);
-		return USB_REGEN;		
-	}
+	
+	total = numSec*BlockSize;
+	already = 0;
+	do {
+		res  = read(fd, buff + already, total - already);
+		if (res < 0) {
+			if(errno ==  EINTR ||
+					errno ==  EAGAIN){
+				continue;
+			}
+			USBDEBUG("Read %s Error:%s\r\n", devname, strerror(errno));
+			close(fd);
+			return USB_REGEN;		
+		}else if(res == 0){
+			USBDEBUG("Read End OF File: %s Error:%s[already=%d total=%d]\r\n", 
+					devname, strerror(errno), already, total);
+			close(fd);
+			return USB_REGEN;		
+		}
+		already += res;
+	} while (already < total);
 	close(fd);
 	
 	return USB_REOK;
@@ -816,23 +833,35 @@ uint8_t LINUX_DiskWriteSectors(usb_device *usbdev,
 	int fd;
 	char *devname = (char*)usbdev->os_priv;
 	off_t offset;
+	int already = 0, res, total = 0;
 	
 	fd = open(devname, O_RDWR);
 	if(fd < 0){
 		USBDEBUG("Open %s Error:%s\n", devname, strerror(errno));
 		return USB_REGEN;
 	}
-	offset = (off_t)secStart *512;	
+	offset = (off_t)secStart *BlockSize;	
 	if(lseek(fd, offset, SEEK_SET) < 0){
 		USBDEBUG("Lseek %s Error:%s\n", devname, strerror(errno));
 		close(fd);
 		return USB_REGEN;
 	}
-	if(write(fd, buff, numSec*BlockSize)< 0){
-		USBDEBUG("write %s Error:%s\n", devname, strerror(errno));
-		close(fd);
-		return USB_REGEN;		
-	}
+
+	total = numSec*BlockSize;
+	already = 0;
+	do {
+		res  = write(fd, buff + already, total - already);
+		if (res < 0) {
+			if(errno ==  EINTR ||
+					errno ==  EAGAIN){
+				continue;
+			}
+			USBDEBUG("Write %s Error:%s\r\n", devname, strerror(errno));
+			close(fd);
+			return USB_REGEN;		
+		}
+		already += res;
+	} while (already < total);
 	close(fd);
 	
 	return USB_REOK;
