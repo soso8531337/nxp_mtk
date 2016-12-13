@@ -566,6 +566,7 @@ int usStorage_firmwareINFO(struct scsi_head *header)
 			strcpy(dinfo.model_name, value);
 		}else if(!strcasecmp(key, "CURVER")){
 			strcpy(dinfo.fw_version, value);
+			FRIMDEBUG("Version is %s\r\n", dinfo.fw_version);
 		}
 	}
 	fclose(fp);
@@ -574,7 +575,7 @@ int usStorage_firmwareINFO(struct scsi_head *header)
 	/*Get SN/license*/
 	memset(&sinfo, 0, sizeof(struct allinfo));
 	showSnLicense(&sinfo);
-	strcpy(dinfo.sn, sinfo.info.sn);
+	strncpy(dinfo.sn, sinfo.info.sn, sizeof(dinfo.sn));
 	strncpy(dinfo.license, sinfo.info.license, sizeof(dinfo.license));
 	memcpy(buffer+total, &dinfo, flen);
 	total += flen;
