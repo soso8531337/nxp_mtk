@@ -87,8 +87,8 @@ uint8_t usbWriteBuffer[USB_WRTE];
 
 #if defined(NXP_CHIP_18XX)
 
-#define NXP_USB_PHONE 	1
-#define NXP_USB_DISK	0
+#define NXP_USB_PHONE 	0
+#define NXP_USB_DISK	1
 
 /** LPCUSBlib Mass Storage Class driver interface configuration and state information. This structure is
  *  passed to all Mass Storage Class driver functions, so that multiple instances of the same class
@@ -730,24 +730,18 @@ static int usStorage_Handle(void)
 	switch(header.ctrid){
 		case SCSI_READ:
 			return usStorage_diskREAD(&header);
-			break;
 		case SCSI_WRITE:		
 			return usStorage_diskWRITE(buffer, size, &header);
-			break;
 		case SCSI_INQUIRY:
 			return usStorage_diskINQUIRY(&header);
-			break;
 		case SCSI_GET_LUN:
 			return usStorage_diskLUN(&header);
-			break;
 		case SCSI_UPDATE_START:
 		case SCSI_UPDATE_DATA:
 		case SCSI_UPDATE_END:
 			return usStorage_firmwareUP(buffer, size);
-			break;
 		case SCSI_FIRMWARE_INFO:
 			return usStorage_firmwareINFO(&header);
-			break;
 		default:
 			SDEBUGOUT("Unhandle Command\r\nheader:%x\r\nwtag:%d\r\n"
 						"ctrid:%d\r\naddr:%u\r\nlen:%d\r\nwlun:%d\r\n", header.head,
@@ -770,6 +764,11 @@ static int usStorage_Handle(void)
 void vs_main_disk(void *pvParameters)
 {
 	while(1){
+		if(USB_HostState[NXP_USB_DISK] < HOST_STATE_Powered){
+			printf("Disk status=%d\r\n", USB_HostState[NXP_USB_DISK]);
+			vTaskDelay(100);
+			continue;
+		}
 		while (USB_HostState[NXP_USB_DISK] != HOST_STATE_Configured) {
 			USB_USBTask(NXP_USB_DISK, USB_MODE_Host);
 			continue;
@@ -787,7 +786,12 @@ void vs_main(void *pvParameters)
 			NULL, (tskIDLE_PRIORITY + 2UL), (TaskHandle_t *) NULL);
 
 	while(1){
-		if (USB_HostState[NXP_USB_PHONE] != HOST_STATE_Configured) {
+		if(USB_HostState[NXP_USB_PHONE] < HOST_STATE_Powered){
+			printf("Phone status=%d\r\n", USB_HostState[NXP_USB_PHONE]);
+			vTaskDelay(100);
+			continue;
+		}
+		while (USB_HostState[NXP_USB_PHONE] != HOST_STATE_Configured) {
 			USB_USBTask(NXP_USB_PHONE, USB_MODE_Host);
 			continue;
 		}
@@ -808,9 +812,9 @@ void vs_main(void *pvParameters)
 void EVENT_USB_Host_DeviceAttached(const uint8_t corenum)
 {
 	if(corenum == NXP_USB_DISK){
-		SDEBUGOUT(("Disk Attached on port %d\r\n"), corenum);	
+		printf(("Disk Attached on port %d\r\n"), corenum);	
 	}else{
-		SDEBUGOUT(("Phone Attached on port %d\r\n"), corenum);	
+		printf(("Phone Attached on port %d\r\n"), corenum);	
 	}
 }
 
@@ -819,10 +823,10 @@ void EVENT_USB_Host_DeviceAttached(const uint8_t corenum)
  */
 void EVENT_USB_Host_DeviceUnattached(const uint8_t corenum)
 {
-	SDEBUGOUT(("\r\nDevice Unattached on port %d\r\n"), corenum);
+	printf(("\r\nDevice Unattached on port %d\r\n"), corenum);
 	memset(&(UStorage_Interface[corenum].State), 0x00, sizeof(UStorage_Interface[corenum].State));
 	if(corenum == NXP_USB_DISK){
-		usDisk_DeviceDisConnect();
+		usDisk_DeviceDisConnect(NULL);
 	}else{
 		usProtocol_DeviceDisConnect();
 	}

@@ -14,6 +14,7 @@
 #include "usSys.h"
 #include "protocol.h"
 #include "usFirmware.h"
+#include "usProtocol.h"
 #if defined(NXP_CHIP_18XX)
 #include "MassStorageHost.h"
 #elif defined(LINUX)

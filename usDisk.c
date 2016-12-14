@@ -136,10 +136,17 @@ uint8_t usDisk_DeviceDetect(void *os_priv)
 		return DISK_REINVAILD;
 	}
 	DSKDEBUG(("Total LUNs: %d - Using first LUN in device.\r\n"), (MaxLUNIndex + 1));
+#if 0 //Not Reset Interface, if did maybe error
 	if(usUsb_ResetMSInterface(usbdev)){		
 		DSKDEBUG("ResetMSInterface Failed\r\n");
 		return DISK_REINVAILD;
-	}	
+	}
+#else
+	USB_ClassInfo_MS_Host_t *MSInterfaceInfo;
+	MSInterfaceInfo = (USB_ClassInfo_MS_Host_t *)(usbdev->os_priv);
+
+	USB_Host_SetInterfaceAltSetting(MSInterfaceInfo->Config.PortNumber, 0, 0);
+#endif	
 	SCSI_Sense_Response_t SenseData;
 	if(usUsb_RequestSense(usbdev, 0, &SenseData)){
 		DSKDEBUG("RequestSense Failed\r\n");

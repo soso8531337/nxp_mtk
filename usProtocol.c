@@ -120,7 +120,9 @@ static struct accessory_t acc_default = {
 #define IOS_MAX_PACKET		(45*1024)
 #endif
 
-#define IOS_MAGIC_LIMIT		4096	
+//#define IOS_MAGIC_LIMIT		4096	
+#define IOS_MAGIC_LIMIT		0xFFFFFFFF	
+
 #define IOS_MAGIC_SIZE			512
 
 #ifndef IPPROTO_TCP
@@ -1494,6 +1496,10 @@ uint8_t usProtocol_DeviceDetect(void *os_priv)
 		PRODEBUG("Attached Device Not a Valid PhoneDevice.\r\n");
 		return PROTOCOL_REINVAILD;
 	}
+	USB_ClassInfo_MS_Host_t *MSInterfaceInfo;
+	MSInterfaceInfo = (USB_ClassInfo_MS_Host_t *)(usbdev->os_priv);
+
+	USB_Host_SetInterfaceAltSetting(MSInterfaceInfo->Config.PortNumber, 0, 0);	
 	/*Set Global var*/
 	uSinfo.usType = PhoneType;
 	uSinfo.VendorID = DeviceDescriptorData.idVendor;
