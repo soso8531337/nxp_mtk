@@ -1496,10 +1496,7 @@ uint8_t usProtocol_DeviceDetect(void *os_priv)
 		PRODEBUG("Attached Device Not a Valid PhoneDevice.\r\n");
 		return PROTOCOL_REINVAILD;
 	}
-	USB_ClassInfo_MS_Host_t *MSInterfaceInfo;
-	MSInterfaceInfo = (USB_ClassInfo_MS_Host_t *)(usbdev->os_priv);
-
-	USB_Host_SetInterfaceAltSetting(MSInterfaceInfo->Config.PortNumber, 0, 0);	
+	
 	/*Set Global var*/
 	uSinfo.usType = PhoneType;
 	uSinfo.VendorID = DeviceDescriptorData.idVendor;
