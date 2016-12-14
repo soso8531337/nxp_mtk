@@ -656,7 +656,10 @@ int usStorage_firmwareUP(uint8_t *buffer, uint32_t recvSize)
 		close(fd);
 		fd = -1;
 		FRIMDEBUG("Check %s MD5\r\n", USTORAGE_UPPATH);
-		return upgradeFirmware(USTORAGE_UPPATH);
+		if(upgradeFirmware(USTORAGE_UPPATH) < 0){
+			FRIMDEBUG("upgradeFirmware %s Error\r\n", USTORAGE_UPPATH);			
+			scsi.relag = 1;
+		}
 	}else{
 		FRIMDEBUG("unknown Comannd ID:%d\r\n", scsi.ctrid);
 		scsi.relag = 1;
