@@ -363,11 +363,13 @@ static uint8_t NXP_Init(usb_device *usbdev, void *os_priv)
 	if(!usbdev || !os_priv){
 		return USB_REPARA;
 	}
-	usbdev->os_priv = os_priv;	
-	MSInterfaceInfo = (USB_ClassInfo_MS_Host_t *)(os_priv);
+	usbdev->os_priv = os_priv;
 
-	/*Just set device_address == PortNumber*/
-	usbdev->device_address  = MSInterfaceInfo->Config.PortNumber;
+	if(usbdev->usb_type == USB_DISK){
+		MSInterfaceInfo = (USB_ClassInfo_MS_Host_t *)(os_priv);
+		/*Just set device_address == PortNumber*/
+		usbdev->device_address  = MSInterfaceInfo->Config.PortNumber;
+	}
 
 	return USB_REOK;
 }
@@ -441,6 +443,22 @@ uint8_t NXP_DiskReadSectors(usb_device *usbdev,
 {
 	int ret;
 
+	if(usbdev->usb_type == USB_CARD){
+		int32_t act_read;
+		if(!usbdev->os_priv){
+			USBDEBUG("SDCard Private Empty\r\n");			
+			return USB_REGEN;
+		}
+		act_read =  Chip_SDMMC_ReadBlocks(LPC_SDMMC, buff, secStart, numSec);
+		if(!act_read){
+			USBDEBUG("Error reading SDCard\r\n");			
+			return USB_REGEN;
+		}
+		USBDEBUG("SDCard Read %dSectors [StarSector:%d][%dBytes]\r\n", 
+				numSec, secStart, act_read);	
+		return USB_REOK;		
+	}
+
 	ret = MS_Host_ReadDeviceBlocks((USB_ClassInfo_MS_Host_t*)usbdev->os_priv, 0, 
 		secStart, numSec, BlockSize, buff);
 	if(ret) {
@@ -457,6 +475,25 @@ uint8_t NXP_DiskWriteSectors(usb_device *usbdev,
 					void *buff, uint32_t secStart, uint32_t numSec, uint16_t BlockSize)
 {
 	int ret;
+
+	if(usbdev->usb_type == USB_CARD){
+		int32_t act_written;
+
+		if(!usbdev->os_priv){
+			USBDEBUG("SDCard Private Empty\r\n");			
+			return USB_REGEN;
+		}		
+		act_written =  Chip_SDMMC_WriteBlocks(LPC_SDMMC, buff, secStart, numSec);
+		if(!act_written){
+			USBDEBUG("Error write SDCard\r\n");			
+			return USB_REGEN;
+		}
+		USBDEBUG("SDCard Write %dSectors [StarSector:%d][%dBytes]\r\n", 
+				numSec, secStart, act_written);	
+		return USB_REOK;		
+	}
+
+	
 	ret = MS_Host_WriteDeviceBlocks((USB_ClassInfo_MS_Host_t*)usbdev->os_priv, 0, 
 					secStart, numSec, BlockSize, buff);
 	if(ret) {
@@ -469,6 +506,7 @@ uint8_t NXP_DiskWriteSectors(usb_device *usbdev,
 	return USB_REOK;
 }
 #endif
+
 uint8_t NXP_GetMaxLUN(usb_device *usbdev, uint8_t *LunIndex)
 {
 	USB_ClassInfo_MS_Host_t *MSInterfaceInfo;

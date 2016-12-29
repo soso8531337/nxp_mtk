@@ -179,7 +179,14 @@ enum{
 	USB_RETRANS
 };
 
-typedef struct  {	
+enum{	
+	USB_PHONE=1<<0,		
+	USB_CARD=1<<1,
+	USB_DISK = 1<<2,
+};
+
+typedef struct  {
+	uint8_t usb_type;
 	uint8_t bus_number;
 	uint8_t device_address;
 	uint8_t interface, ep_in, ep_out;

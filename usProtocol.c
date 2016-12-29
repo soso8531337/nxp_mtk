@@ -100,7 +100,7 @@ static struct accessory_t acc_default = {
 #define IOS_PROHEADER(X)		(( ((X) < 2) ? 8 : sizeof(struct mux_header))+sizeof(struct tcphdr))
 #define IOS_WIN_SIZE				131072 /*Must Not change this value*/
 #if defined(NXP_CHIP_18XX)
-#define USB_MTU				(8*1024)
+#define USB_MTU				(32*1024)
 #else
 #define USB_MTU				(258*1024)
 #endif
@@ -489,7 +489,7 @@ static void resetReceive(void)
 			PRODEBUG("Reset Opeartion Need To receive RX_ACK[%u<--->%u]\r\n", 
 							uSdev->tcpinfo.rx_ack, uSdev->tcpinfo.tx_seq);
 			if((rc = usUsb_BlukPacketReceiveTmout(&(uSdev->usbdev), rstbuf, 
-									uSdev->usbdev.wMaxPacketSize, &actual_length, 1000))){
+									uSdev->usbdev.wMaxPacketSize, &actual_length, 1000)) != 0){
 				if(rc == USB_DISCNT){
 					PRODEBUG("Device Disconncet\r\n");
 					break;
@@ -612,7 +612,7 @@ static uint8_t usProtocol_aoaSendPackage(mux_itunes *uSdev, void *buffer, uint32
 			sndSize = freeSize;
 		}
 		if((rc = usUsb_BlukPacketSend(&(uSdev->usbdev), curBuf+already, 
-						sndSize, &actual_length))){
+						sndSize, &actual_length)) != 0){
 			if(rc >= USB_DISCNT){
 				PRODEBUG("Device Disconncet\r\n");
 				return PROTOCOL_DISCONNECT;
@@ -646,7 +646,7 @@ static uint8_t usProtocol_aoaRecvPackage(mux_itunes *uSdev, void **buffer,
 		uSdev->protlen = uSdev->prohlen = 0;
 		/*Receive Header*/
 		if((rc = usUsb_BlukPacketReceive(&(uSdev->usbdev), tbuffer, 
-						uSdev->usbdev.wMaxPacketSize, &actual_length))){
+						uSdev->usbdev.wMaxPacketSize, &actual_length)) != 0){
 			if(rc >= USB_DISCNT){
 				PRODEBUG("Device Disconncet\r\n");
 				return PROTOCOL_DISCONNECT;
@@ -687,7 +687,7 @@ static uint8_t usProtocol_aoaRecvPackage(mux_itunes *uSdev, void **buffer,
 			if((hdr->ctrid & SCSI_WFLAG) &&hdr->len){
 				while(uSdev->protlen-uSdev->prohlen){
 					if((rc = usUsb_BlukPacketReceive(&(uSdev->usbdev), tbuffer, 
-							uSdev->protlen-uSdev->prohlen, &actual_length))){
+							uSdev->protlen-uSdev->prohlen, &actual_length)) != 0){
 						if(rc >= USB_DISCNT){
 							PRODEBUG("Device Disconncet\r\n");
 							return PROTOCOL_DISCONNECT;
@@ -725,7 +725,7 @@ static uint8_t usProtocol_aoaRecvPackage(mux_itunes *uSdev, void **buffer,
 	PRODEBUG("Prepare Receive aoa Package %d[%d/%d]\r\n", 
 					Recvsize, uSdev->protlen, uSdev->prohlen);
 	if((rc= usUsb_BlukPacketReceiveStream(&(uSdev->usbdev), tbuffer, 
-									Recvsize, &trueRecv))){
+									Recvsize, &trueRecv)) != 0){
 		if(rc >= USB_DISCNT){
 			PRODEBUG("Device Disconncet\r\n");
 			return PROTOCOL_DISCONNECT;
@@ -795,7 +795,7 @@ static uint8_t usProtocol_iosRecvPackage(mux_itunes *uSdev, void **buffer,
 		PRODEBUG("First Receive ios Package\r\n");
 		/*Receive Header*/
 		if((rc = usUsb_BlukPacketReceive(&(uSdev->usbdev), tbuffer, 
-								uSdev->usbdev.wMaxPacketSize, &actual_length))){
+								uSdev->usbdev.wMaxPacketSize, &actual_length)) != 0){
 			if(rc >= USB_DISCNT){
 				PRODEBUG("Device Disconncet\r\n");
 				return PROTOCOL_DISCONNECT;
@@ -834,7 +834,7 @@ static uint8_t usProtocol_iosRecvPackage(mux_itunes *uSdev, void **buffer,
 		if(uSdev->protlen<= uSdev->max_payload &&
 				(read_length = uSdev->protlen-uSdev->prohlen) > 0){
 			if((rc = usUsb_BlukPacketReceive(&(uSdev->usbdev), tbuffer, 
-							read_length, &actual_length))){
+							read_length, &actual_length)) != 0){
 				if(rc >= USB_DISCNT){
 					PRODEBUG("Device Disconncet\r\n");
 					return PROTOCOL_DISCONNECT;
@@ -895,7 +895,7 @@ static uint8_t usProtocol_iosRecvPackage(mux_itunes *uSdev, void **buffer,
 	sizeSend = min(sizeSend, (uSdev->protlen-uSdev->prohlen));
 	PRODEBUG("Prepare Receive ios Package %d\r\n", sizeSend);
 	if((rc = usUsb_BlukPacketReceiveStream(&(uSdev->usbdev), tbuffer, 
-									sizeSend, &trueSend))){
+									sizeSend, &trueSend)) != 0){
 		if(rc >= USB_DISCNT){
 			PRODEBUG("Device Disconncet\r\n");
 			return PROTOCOL_DISCONNECT;

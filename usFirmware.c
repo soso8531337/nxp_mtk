@@ -64,7 +64,7 @@ int usStorage_firmwareINFO(struct scsi_head *header)
 	memcpy(buffer+total, &dinfo, flen);
 	total += flen;
 	
-	if((rc = usProtocol_SendPackage(buffer, total))){
+	if((rc = usProtocol_SendPackage(buffer, total)) != 0){
 		FRIMDEBUG("usProtocol_SendPackage Failed\r\n");
 		return rc;
 	}

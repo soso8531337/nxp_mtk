@@ -38,7 +38,10 @@
 #include "usSys.h"
 #include "usFirmware.h"
 #if defined(NXP_CHIP_18XX)
-#include "fsusb_cfg.h"
+#include <string.h>
+#include "board.h"
+#include "MassStorageHost.h"
+#include "chip.h"
 #include "FreeRTOS.h"
 #include "task.h"
 #elif defined(LINUX)
@@ -207,6 +210,105 @@ static void SetUsb1ClockPinmux( void )
 					SCU_USB1_PIN_CFG_EPWR);
 }
 
+/****************SD Card************************/
+/* SDIO wait flag */
+static volatile int32_t sdio_wait_exit = 0;
+static volatile int32_t sd_plugin = 0;
+
+/* SDMMC card info structure */
+mci_card_struct SDCardInfo;
+
+/* Delay callback for timed SDIF/SDMMC functions */
+static void sdmmc_waitms(uint32_t time)
+{
+	/* In an RTOS, the thread would sleep allowing other threads to run.
+	   For standalone operation, we just spin on RI timer */
+	vTaskDelay(time);
+	return;
+}
+
+/**
+ * @brief	Sets up the SD event driven wakeup
+ * @param	bits : Status bits to poll for command completion
+ * @return	Nothing
+ */
+static void sdmmc_setup_wakeup(void *bits)
+{
+	uint32_t bit_mask = *((uint32_t *)bits);
+	/* Wait for IRQ - for an RTOS, you would pend on an event here with a IRQ based wakeup. */
+	NVIC_ClearPendingIRQ(SDIO_IRQn);
+	sdio_wait_exit = 0;
+	Chip_SDIF_SetIntMask(LPC_SDMMC, bit_mask);
+	NVIC_EnableIRQ(SDIO_IRQn);
+}
+
+/**
+ * @brief	A better wait callback for SDMMC driven by the IRQ flag
+ * @return	0 on success, or failure condition (-1)
+ */
+static uint32_t sdmmc_irq_driven_wait(void)
+{
+	uint32_t status;
+
+	/* Wait for event, would be nice to have a timeout, but keep it  simple */
+	while (sdio_wait_exit == 0) {}
+
+	/* Get status and clear interrupts */
+	status = Chip_SDIF_GetIntStatus(LPC_SDMMC);
+	Chip_SDIF_ClrIntStatus(LPC_SDMMC, status);
+	Chip_SDIF_SetIntMask(LPC_SDMMC, 0);
+
+	return status;
+}
+static void App_SDMMC_Init(void)
+{
+	memset(&SDCardInfo, 0, sizeof(SDCardInfo));
+	SDCardInfo.card_info.evsetup_cb = sdmmc_setup_wakeup;
+	SDCardInfo.card_info.waitfunc_cb = sdmmc_irq_driven_wait;
+	SDCardInfo.card_info.msdelay_func = sdmmc_waitms;
+}
+
+void SDIO_IRQHandler(void)
+{
+	/* All SD based register handling is done in the callback
+	   function. The SDIO interrupt is not enabled as part of this
+	   driver and needs to be enabled/disabled in the callbacks or
+	   application as needed. This is to allow flexibility with IRQ
+	   handling for applicaitons and RTOSes. */
+	/* Set wait exit flag to tell wait function we are ready. In an RTOS,
+	   this would trigger wakeup of a thread waiting for the IRQ. */
+	NVIC_DisableIRQ(SDIO_IRQn);
+	sdio_wait_exit = 1;
+}
+
+static void P7_Board_SDMMC_Init(void)
+{
+	Chip_SCU_PinMuxSet(0x1, 9, (SCU_PINIO_FAST | SCU_MODE_FUNC7));  /* P1.9 connected to SDIO_D0 */
+	Chip_SCU_PinMuxSet(0x1, 10, (SCU_PINIO_FAST | SCU_MODE_FUNC7));  /* P1.10 connected to SDIO_D1 */
+	Chip_SCU_PinMuxSet(0x1, 11, (SCU_PINIO_FAST | SCU_MODE_FUNC7));  /* P1.11 connected to SDIO_D2 */
+	Chip_SCU_PinMuxSet(0x1, 12, (SCU_PINIO_FAST | SCU_MODE_FUNC7));  /* P1.12 connected to SDIO_D3 */
+
+	Chip_SCU_PinMuxSet(0x1, 13, (SCU_MODE_INACT | SCU_MODE_INBUFF_EN | SCU_MODE_FUNC7));  /* P1.13 connected to SDIO_CD */
+	Chip_SCU_PinMuxSet(0x1, 6, (SCU_PINIO_FAST | SCU_MODE_FUNC7));  /* P1.6 connected to SDIO_CMD */
+	Chip_SCU_PinMuxSet(0x1, 5, (SCU_PINIO_FAST | SCU_MODE_FUNC7));  /* P1.7 connected to SDIO_POW */
+	Chip_SCU_PinMuxSet(0xD, 15, (SCU_PINIO_FAST | SCU_MODE_FUNC5));  /* PD.15 connected to SDIO_WP */
+	Chip_SCU_ClockPinMuxSet(2, (SCU_MODE_INACT | SCU_MODE_HIGHSPEEDSLEW_EN | SCU_MODE_FUNC4));/* CLK2 connected to SDIO_CLK */
+}
+
+
+static void SDMMC_Init(void)
+{
+    /* Disable SD/MMC interrupt */
+	NVIC_DisableIRQ(SDIO_IRQn);
+	App_SDMMC_Init();
+	/*  SD/MMC initialization */
+	P7_Board_SDMMC_Init();
+	/* The SDIO driver needs to know the SDIO clock rate */
+	Chip_SDIF_Init(LPC_SDMMC);	
+	/* Enable SD/MMC Interrupt */
+	NVIC_EnableIRQ(SDIO_IRQn);
+	printf("SD/MMC Init Finish...\r\n");
+}
 
 /*****************************************************************************
  * Public types/enumerations/variables
@@ -222,7 +324,7 @@ static void usSys_init(int port_num)
 		Chip_USB0_Init();
 	} else {
 		SetUsb1ClockPinmux();
-//		Chip_USB1_Init();
+		//Chip_USB1_Init();
 	}
 #endif
 	USB_Init(UStorage_Interface[port_num].Config.PortNumber, USB_MODE_Host);
@@ -237,6 +339,8 @@ static void SetupHardware(void)
 #endif
 	usSys_init(0);
 	usSys_init(1);
+	/*Init SD Card*/
+	SDMMC_Init();
 #if (defined(CHIP_LPC43XX_NOSYSTEM))
 	/* Hardware Initialization */
 	Board_Debug_Init();
@@ -311,7 +415,7 @@ static int usStorage_diskMULREAD(struct scsi_head *header)
 	}
 	memcpy(buffer, header, PRO_HDR);
 	/*Send To Phone*/
-	if((rc = usProtocol_SendPackage(buffer, PRO_HDR))){
+	if((rc = usProtocol_SendPackage(buffer, PRO_HDR)) != 0){
 		SDEBUGOUT("Send To Phone[Just Header Error]\r\n");
 		return rc;
 	}
@@ -328,13 +432,13 @@ static int usStorage_diskMULREAD(struct scsi_head *header)
 
 		avsize = min(USDISK_SECTOR*OP_DIV(size), header->len-rsize); /*We leave a sector for safe*/		
 		secCount = OP_DIV(avsize);
-		if(usDisk_DiskReadSectors(buffer, addr, secCount)){
+		if(usDisk_DiskReadSectors(buffer, header->wlun, addr, secCount)){
 			SDEBUGOUT("Read Sector Error[SndTotal:%d addr:%d  SectorCount:%d]\r\n",
 					rsize, addr, secCount);
 			return 1;
 		}
 		/*Send To Phone*/
-		if((rc = usProtocol_SendPackage(buffer, avsize))){
+		if((rc = usProtocol_SendPackage(buffer, avsize)) != 0){
 			SDEBUGOUT("Send To Phone[SndTotal:%d addr:%d  SectorCount:%d]\r\n",
 					rsize, addr, secCount);
 			return rc;
@@ -372,7 +476,7 @@ static int usStorage_diskSIGREAD(struct scsi_head *header)
 		return 1;
 	}
 
-	if(usDisk_DiskReadSectors(buffer, header->addr, OP_DIV(header->len))){
+	if(usDisk_DiskReadSectors(buffer, header->wlun, header->addr, OP_DIV(header->len))){
 		SDEBUGOUT("Read Sector Error[SndTotal:%d addr:%d  SectorCount:%d]\r\n",
 				header->len+PRO_HDR, header->addr, OP_DIV(header->len));
 		/*Write to Phone*/
@@ -382,7 +486,7 @@ static int usStorage_diskSIGREAD(struct scsi_head *header)
 	}
 	/*Send To Phone*/
 	usStorage_sendHEAD(header); 
-	if((rc = usProtocol_SendPackage(buffer, header->len))){
+	if((rc = usProtocol_SendPackage(buffer, header->len)) != 0){
 		SDEBUGOUT("Send To Phone[SndTotal:%d addr:%d  SectorCount:%d]\r\n",
 				header->len+PRO_HDR, header->addr, OP_DIV(header->len));
 		return rc;
@@ -473,7 +577,7 @@ static int usStorage_diskWRITE(uint8_t *buffer, uint32_t recvSize, struct scsi_h
 			if(usbWriteBufferLen > 0){
 				memcpy(writePtr, pbuffer, usbWriteBufferLen);
 			}
-			if(usDisk_DiskWriteSectors(usbWriteBuffer, addr, USB_WRTESEC)){
+			if(usDisk_DiskWriteSectors(usbWriteBuffer, header->wlun, addr, USB_WRTESEC)){
 				SDEBUGOUT("REQUEST WRITE Error[addr:%d	SectorCount:%d]\r\n",
 								addr, USB_WRTESEC);
 				/*Write to Phone*/
@@ -499,7 +603,7 @@ static int usStorage_diskWRITE(uint8_t *buffer, uint32_t recvSize, struct scsi_h
 	}
 
 	if(usbWriteBufferLen != USB_WRTE &&
-			usDisk_DiskWriteSectors(usbWriteBuffer, addr,
+			usDisk_DiskWriteSectors(usbWriteBuffer, header->wlun, addr,
 				OP_DIV(USB_WRTE-usbWriteBufferLen))){
 		SDEBUGOUT("REQUEST WRITE Error[addr:%d	SectorCount:%d]\r\n",
 						addr, OP_DIV(USB_WRTE-usbWriteBufferLen));
@@ -544,7 +648,7 @@ static int usStorage_diskWRITE(uint8_t *buffer, uint32_t recvSize, struct scsi_h
 								secSize, USDISK_SECTOR);
 	}
 	if((sdivSize = OP_DIV(paySize)) > 0&& 
-			usDisk_DiskWriteSectors(buffer+PRO_HDR, addr, sdivSize)){
+			usDisk_DiskWriteSectors(buffer+PRO_HDR, header->wlun, addr, sdivSize)){
 		SDEBUGOUT("REQUEST WRITE Error[addr:%d  SectorCount:%d]\r\n",
 						addr, sdivSize);
 		/*Write to Phone*/
@@ -583,7 +687,7 @@ static int usStorage_diskWRITE(uint8_t *buffer, uint32_t recvSize, struct scsi_h
 			memcpy(sector+secSize, ptr, USDISK_SECTOR-secSize);
 			ptr += (USDISK_SECTOR-secSize);
 			/*Write to disk*/
-			if(usDisk_DiskWriteSectors(sector, addr, 1)){
+			if(usDisk_DiskWriteSectors(sector, header->wlun, addr, 1)){
 				SDEBUGOUT("REQUEST WRITE Last Sector Error[addr:%d SectorCount:%d]\r\n",
 							addr, secCount);
 				/*Write to Phone*/
@@ -607,7 +711,7 @@ static int usStorage_diskWRITE(uint8_t *buffer, uint32_t recvSize, struct scsi_h
 			memcpy(sector, ptr+secCount*USDISK_SECTOR, secSize);
 		}
 		/*Write to disk*/
-		if(secCount && usDisk_DiskWriteSectors(ptr, addr, secCount)){
+		if(secCount && usDisk_DiskWriteSectors(ptr, header->wlun, addr, secCount)){
 			SDEBUGOUT("REQUEST WRITE Error[addr:%d	SectorCount:%d]\r\n",
 							addr, sdivSize);
 			/*Write to Phone*/
@@ -648,9 +752,8 @@ static int usStorage_diskINQUIRY(struct scsi_head *header)
 					header->len, sizeof(struct scsi_inquiry_info));
 		return 1;
 	}
-	if(usDisk_DiskInquiry(&dinfo)){
+	if(usDisk_DiskInquiry(header->wlun, &dinfo)){
 		SDEBUGOUT("usDisk_DiskInquiry  Error\r\n");
-		return 1;
 	}
 	if(usProtocol_GetAvaiableBuffer((void **)&buffer, &size)){
 		SDEBUGOUT("usProtocol_GetAvaiableBuffer Failed\r\n");
@@ -660,7 +763,7 @@ static int usStorage_diskINQUIRY(struct scsi_head *header)
 	memcpy(buffer+PRO_HDR, &dinfo,  sizeof(struct scsi_inquiry_info));
 	total = PRO_HDR+sizeof(struct scsi_inquiry_info);
 	
-	if((rc  = usProtocol_SendPackage(buffer, total))){
+	if((rc  = usProtocol_SendPackage(buffer, total)) != 0){
 		SDEBUGOUT("usStorage_diskINQUIRY Failed\r\n");
 		return rc;
 	}
@@ -689,7 +792,7 @@ static int usStorage_diskLUN(struct scsi_head *header)
 	memcpy(buffer+total, &num, 1);
 	total += 1;
 	
-	if((rc = usProtocol_SendPackage(buffer, total))){
+	if((rc = usProtocol_SendPackage(buffer, total)) != 0){
 		SDEBUGOUT("usProtocol_SendPackage Failed\r\n");
 		return rc;
 	}
@@ -704,7 +807,7 @@ static int usStorage_Handle(void)
 	uint8_t rc;
 	struct scsi_head header;
 
-	if((rc = usProtocol_RecvPackage((void **)&buffer, 0, &size))){
+	if((rc = usProtocol_RecvPackage((void **)&buffer, 0, &size)) != 0){
 		if(rc == PROTOCOL_DISCONNECT){
 			return PROTOCOL_DISCONNECT;
 		}
@@ -761,18 +864,63 @@ static int usStorage_Handle(void)
  *  calls the filesystem function to read files from USB Disk
  *Ustorage Project by Szitman 20161022
  */
+ /*
+**return value:
+*0: no usb disk
+*1: usb disk ok
+*/
+ static void wait_usbdisk(void)
+{
+	if(USB_HostState[NXP_USB_DISK] < HOST_STATE_Powered){
+		//printf("Disk status=%d\r\n", USB_HostState[NXP_USB_DISK]);
+		return ;
+	}
+	while (USB_HostState[NXP_USB_DISK] != HOST_STATE_Configured) {
+		USB_USBTask(NXP_USB_DISK, USB_MODE_Host);
+		continue;
+	}
+}
+
+ static void wait_sdcard(void)
+{
+	 uint32_t rc;
+
+	int32_t SD_status = Chip_SDIF_CardNDetect(LPC_SDMMC);
+	if(SD_status == 0 &&sd_plugin == 0){
+		/*Found SD Card*/
+		/* Enable slot power */		
+		printf("SD/MMC Card Plug In! ..\r\n");
+		Chip_SDIF_PowerOn(LPC_SDMMC);
+		/* Enumerate the SDMMC card once detected.
+		 * Note this function may block for a little while. */		 
+		printf("SD/MMC PowerON! ..\r\n");
+		rc = Chip_SDMMC_Acquire(LPC_SDMMC, &SDCardInfo);
+		if (!rc) {
+			printf("SD/MMC Card enumeration failed! ..\r\n");
+			Chip_SDIF_PowerOff(LPC_SDMMC);
+			return;
+		}		
+		printf("SD/MMC Acquire Finish! ..\r\n");
+		if(usDisk_DeviceDetect(USB_CARD, (void*)&SDCardInfo)){
+			printf("SD/MMC Device Detect Failed\r\n");
+			return;
+		}
+		sd_plugin = 1;
+	}else if(SD_status && sd_plugin == 1){
+		/*SD Card Out*/		
+		printf("SD/MMC Card Plug Out! ..\r\n");
+		Chip_SDIF_PowerOff(LPC_SDMMC);
+		sd_plugin = 0;
+		usDisk_DeviceDisConnect(USB_CARD, NULL);		
+		App_SDMMC_Init();
+	}
+}
+
 void vs_main_disk(void *pvParameters)
 {
 	while(1){
-		if(USB_HostState[NXP_USB_DISK] < HOST_STATE_Powered){
-			printf("Disk status=%d\r\n", USB_HostState[NXP_USB_DISK]);
-			vTaskDelay(100);
-			continue;
-		}
-		while (USB_HostState[NXP_USB_DISK] != HOST_STATE_Configured) {
-			USB_USBTask(NXP_USB_DISK, USB_MODE_Host);
-			continue;
-		}		
+		wait_sdcard();
+		wait_usbdisk();
 		vTaskDelay(100);
 	}
 }
@@ -787,7 +935,7 @@ void vs_main(void *pvParameters)
 
 	while(1){
 		if(USB_HostState[NXP_USB_PHONE] < HOST_STATE_Powered){
-			printf("Phone status=%d\r\n", USB_HostState[NXP_USB_PHONE]);
+			//printf("Phone status=%d\r\n", USB_HostState[NXP_USB_PHONE]);
 			vTaskDelay(100);
 			continue;
 		}
@@ -826,7 +974,7 @@ void EVENT_USB_Host_DeviceUnattached(const uint8_t corenum)
 	printf(("\r\nDevice Unattached on port %d\r\n"), corenum);
 	memset(&(UStorage_Interface[corenum].State), 0x00, sizeof(UStorage_Interface[corenum].State));
 	if(corenum == NXP_USB_DISK){
-		usDisk_DeviceDisConnect(NULL);
+		usDisk_DeviceDisConnect(USB_DISK, NULL);
 	}else{
 		usProtocol_DeviceDisConnect();
 	}
@@ -839,7 +987,7 @@ void EVENT_USB_Host_DeviceEnumerationComplete(const uint8_t corenum)
 {
 	if(corenum == NXP_USB_DISK){
 		SDEBUGOUT(("Disk Enumeration on port %d\r\n"), corenum);
-		usDisk_DeviceDetect(&UStorage_Interface[corenum]);
+		usDisk_DeviceDetect(USB_DISK, &UStorage_Interface[corenum]);
 	}else if(corenum == NXP_USB_PHONE){
 		SDEBUGOUT(("Phone Enumeration on port %d\r\n"), corenum);
 		usProtocol_DeviceDetect(&UStorage_Interface[corenum]);	
@@ -888,6 +1036,9 @@ void EVENT_USB_Host_DeviceEnumerationFailed(const uint8_t corenum,
 #define STOR_STR_CHANGE		"change"
 #define PHONE_SUBSYS				"usb"
 #define PHONE_DEVTYPE			"usb_device"
+
+#define PHONE_BUS_LOC           "usb1/1-1/1-1.2"
+#define DISK_BUS_LOC            "usb1/1-1/1-1.1"
 
 struct udevd_uevent_msg {
 	unsigned char id;
@@ -1039,6 +1190,8 @@ static int storage_handle_diskplug(struct udevd_uevent_msg *msg)
 	int countTime = 0;
 	uint32_t sendCount=0;
 	uint8_t diskPlug;
+	uint8_t rc;
+	
 	if(!msg){
 		return -1;
 	}
@@ -1070,14 +1223,23 @@ static int storage_handle_diskplug(struct udevd_uevent_msg *msg)
 		SDEBUGOUT("ADD Device %d [%s/%s] To Storage List\r\n", 
 				msg->id, msg->devname,  msg->devpath);
 		notify_set_action(notifyADD);
-		usDisk_DeviceDetect((void*)devbuf);
+		if(!strncmp(msg->devname, "mmcblk", 6)){
+			usDisk_DeviceDetect(USB_CARD, (void*)devbuf);
+		}else{
+			usDisk_DeviceDetect(USB_DISK, (void*)devbuf);
+		}
 	}else if(!strcasecmp(msg->action, STOR_STR_REM)){
 		SDEBUGOUT("Remove Device [%s/%s] From Storage List\r\n", 
 					 msg->devname,  msg->devpath);		
 		char devbuf[128] = {0};
 		sprintf(devbuf, "/dev/%s", msg->devname);
-		
-		if(usDisk_DeviceDisConnect(devbuf)){			
+
+		if(!strncmp(msg->devname, "mmcblk", 6)){
+			rc = usDisk_DeviceDisConnect(USB_CARD, devbuf);
+		}else{
+			rc = usDisk_DeviceDisConnect(USB_DISK, (void*)devbuf);
+		}	
+		if(rc){			
 			return 0;
 		}		
 		notify_set_action(notifyREM);			
@@ -1095,7 +1257,12 @@ static int storage_handle_diskplug(struct udevd_uevent_msg *msg)
 		if((fd = open(devbuf, O_RDONLY)) < 0){
 			/*Remove ID*/
 			SDEBUGOUT("We Think it may be Remove action[%s]\r\n", msg->devname);
-			if(usDisk_DeviceDisConnect(devbuf)){
+			if(!strncmp(msg->devname, "mmcblk", 6)){
+				rc = usDisk_DeviceDisConnect(USB_CARD, devbuf);
+			}else{
+				rc = usDisk_DeviceDisConnect(USB_DISK, (void*)devbuf);
+			}
+			if(rc){
 				return 0;
 			}			
 			notify_set_action(notifyREM);			
@@ -1103,7 +1270,11 @@ static int storage_handle_diskplug(struct udevd_uevent_msg *msg)
 			close(fd);			
 			SDEBUGOUT("We Think it may be Add action[%s]\r\n", msg->devname);
 			notify_set_action(notifyADD);			
-			usDisk_DeviceDetect((void*)devbuf);
+			if(!strncmp(msg->devname, "mmcblk", 6)){
+				usDisk_DeviceDetect(USB_CARD, (void*)devbuf);
+			}else{
+				usDisk_DeviceDetect(USB_DISK, (void*)devbuf);
+			}
 		}		
 	}else{
 		SDEBUGOUT("Unhandle Device %s [%s/%s] Event\r\n",
@@ -1211,7 +1382,8 @@ static int storage_action_handle(int sockfd)
 	if(!strcasecmp(msg->subsystem, STOR_SUBSYS) &&
 			!strcasecmp(msg->devtype, STOR_DEVTYPE)){
 		storage_handle_diskplug(msg);
-	}else if(!strcasecmp(msg->subsystem, PHONE_SUBSYS) &&
+	}else if(strstr(msg->devpath, PHONE_BUS_LOC) &&
+		!strcasecmp(msg->subsystem, PHONE_SUBSYS) &&
 				!strcasecmp(msg->devtype, PHONE_DEVTYPE)){
 		SDEBUGOUT("Phone Detect [%s/%s]\r\n", 
 						msg->devname,  msg->devpath);
