@@ -398,7 +398,7 @@ uint8_t usDisk_DeviceDetect(uint8_t type, void *os_priv)
 	}
 	strcpy(linxDiskinfo->dev, dev);
 	pDiskInfo->diskdev.usb_type = type;
-	pDiskInfo->diskdev.os_priv = (void*)linxDiskinfo;
+	pDiskInfo->diskdev.os_priv = (void*)(linxDiskinfo->dev);
 
 	/*Set readahead parameter*/
 	if(blockdev_readahead(dev, BLKRASIZE) <  0){
@@ -479,6 +479,7 @@ uint8_t usDisk_DeviceDisConnect(uint8_t type, void *os_priv)
 		if(linxDiskinfo &&
 				!strcmp(linxDiskinfo->dev, os_priv)){
 			DSKDEBUG("Disk DiskConncect [%s]\r\n",  os_priv);
+			close(linxDiskinfo->diskFD);
 			free(linxDiskinfo);
 			memset(&uDinfo[curdisk], 0, sizeof(usDisk_info));			
 			return DISK_REOK;
