@@ -391,12 +391,22 @@ uint8_t NXP_DiskReadSectors(usb_device *usbdev,
 		}else{
 			numSecPer = numSec-already;
 		}
-		ret = MS_Host_ReadDeviceBlocks((USB_ClassInfo_MS_Host_t*)usbdev->os_priv, 0, 
-							curSec, numSecPer, BlockSize, (void *)(curBuf+already*BlockSize));
-		if(ret) {
-			USBDEBUG("Error reading device block. ret = %d\r\n", ret);
-			USB_Host_SetDeviceConfiguration(usbdev->device_address, 0);
-			return USB_REGEN;
+		if(usbdev->usb_type == USB_CARD){
+			int32_t act_read;
+			act_read =  Chip_SDMMC_ReadBlocks(LPC_SDMMC, 
+					(void *)(curBuf+already*DEF_SECTOR), curSec, numSecPer);
+			if(!act_read){
+				USBDEBUG("Error write SDCard\r\n"); 		
+				return USB_REGEN;
+			}
+		}else{	
+			ret = MS_Host_ReadDeviceBlocks((USB_ClassInfo_MS_Host_t*)usbdev->os_priv, 0, 
+								curSec, numSecPer, BlockSize, (void *)(curBuf+already*BlockSize));
+			if(ret) {
+				USBDEBUG("Error reading device block. ret = %d\r\n", ret);
+				USB_Host_SetDeviceConfiguration(usbdev->device_address, 0);
+				return USB_REGEN;
+			}
 		}
 		already += numSecPer;
 		curSec += numSecPer;
@@ -422,12 +432,22 @@ uint8_t NXP_DiskWriteSectors(usb_device *usbdev,
 		}else{
 			numSecPer = numSec-already;
 		}
-		ret = MS_Host_WriteDeviceBlocks((USB_ClassInfo_MS_Host_t*)usbdev->os_priv, 0, 
-							curSec, numSecPer, BlockSize, (void *)(curBuf+already*BlockSize));
-		if(ret) {
-			USBDEBUG("Error writing device block. ret = %d\r\n", ret);
-			USB_Host_SetDeviceConfiguration(usbdev->device_address, 0);
-			return USB_REGEN;
+		if(usbdev->usb_type == USB_CARD){
+			int32_t act_written;	
+			act_written =  Chip_SDMMC_WriteBlocks(LPC_SDMMC, 
+					(void *)(curBuf+already*DEF_SECTOR), curSec, numSecPer);
+			if(!act_written){
+				USBDEBUG("Error write SDCard\r\n"); 		
+				return USB_REGEN;
+			}
+		}else{
+			ret = MS_Host_WriteDeviceBlocks((USB_ClassInfo_MS_Host_t*)usbdev->os_priv, 0, 
+								curSec, numSecPer, BlockSize, (void *)(curBuf+already*BlockSize));
+			if(ret) {
+				USBDEBUG("Error writing device block. ret = %d\r\n", ret);
+				USB_Host_SetDeviceConfiguration(usbdev->device_address, 0);
+				return USB_REGEN;
+			}
 		}
 		already += numSecPer;
 		curSec += numSecPer;
@@ -443,12 +463,13 @@ uint8_t NXP_DiskReadSectors(usb_device *usbdev,
 {
 	int ret;
 
+	if(!usbdev || !buff){
+		printf("Parameter Error\r\n");
+		return USB_REPARA;
+	}
 	if(usbdev->usb_type == USB_CARD){
 		int32_t act_read;
-		if(!usbdev->os_priv){
-			USBDEBUG("SDCard Private Empty\r\n");			
-			return USB_REGEN;
-		}
+
 		act_read =  Chip_SDMMC_ReadBlocks(LPC_SDMMC, buff, secStart, numSec);
 		if(!act_read){
 			USBDEBUG("Error reading SDCard\r\n");			
@@ -457,17 +478,17 @@ uint8_t NXP_DiskReadSectors(usb_device *usbdev,
 		USBDEBUG("SDCard Read %dSectors [StarSector:%d][%dBytes]\r\n", 
 				numSec, secStart, act_read);	
 		return USB_REOK;		
+	}else{
+		/*USB Storage Read*/
+		ret = MS_Host_ReadDeviceBlocks((USB_ClassInfo_MS_Host_t*)usbdev->os_priv, 0, 
+				secStart, numSec, BlockSize, buff);
+		if(ret) {
+			USBDEBUG("Error reading device block. ret = %d\r\n", ret);
+			USB_Host_SetDeviceConfiguration(usbdev->device_address, 0);
+			return USB_REGEN;
+		}	
+		USBDEBUG("SCSI Read %dSectors [StarSector:%d]\r\n", numSec, secStart); 	
 	}
-
-	ret = MS_Host_ReadDeviceBlocks((USB_ClassInfo_MS_Host_t*)usbdev->os_priv, 0, 
-		secStart, numSec, BlockSize, buff);
-	if(ret) {
-		USBDEBUG("Error reading device block. ret = %d\r\n", ret);
-		USB_Host_SetDeviceConfiguration(usbdev->device_address, 0);
-		return USB_REGEN;
-	}
-	
-	USBDEBUG("SCSI Read %dSectors [StarSector:%d]\r\n", numSec, secStart); 	
 	return USB_REOK;
 }
 
@@ -476,13 +497,13 @@ uint8_t NXP_DiskWriteSectors(usb_device *usbdev,
 {
 	int ret;
 
+	if(!usbdev || !buff){
+		printf("Parameter Error\r\n");
+		return USB_REPARA;
+	}
 	if(usbdev->usb_type == USB_CARD){
 		int32_t act_written;
-
-		if(!usbdev->os_priv){
-			USBDEBUG("SDCard Private Empty\r\n");			
-			return USB_REGEN;
-		}		
+		
 		act_written =  Chip_SDMMC_WriteBlocks(LPC_SDMMC, buff, secStart, numSec);
 		if(!act_written){
 			USBDEBUG("Error write SDCard\r\n");			
@@ -491,18 +512,17 @@ uint8_t NXP_DiskWriteSectors(usb_device *usbdev,
 		USBDEBUG("SDCard Write %dSectors [StarSector:%d][%dBytes]\r\n", 
 				numSec, secStart, act_written);	
 		return USB_REOK;		
+	}else{
+		/*USB Storage Write*/
+		ret = MS_Host_WriteDeviceBlocks((USB_ClassInfo_MS_Host_t*)usbdev->os_priv, 0, 
+						secStart, numSec, BlockSize, buff);
+		if(ret) {
+			USBDEBUG("Error writing device block. ret = %d\r\n", ret);		
+			USB_Host_SetDeviceConfiguration(usbdev->device_address, 0);
+			return USB_REGEN;
+		}
+		USBDEBUG("SCSI Write %dSectors [StarSector:%d]\r\n", numSec, secStart); 	
 	}
-
-	
-	ret = MS_Host_WriteDeviceBlocks((USB_ClassInfo_MS_Host_t*)usbdev->os_priv, 0, 
-					secStart, numSec, BlockSize, buff);
-	if(ret) {
-		USBDEBUG("Error writing device block. ret = %d\r\n", ret);		
-		USB_Host_SetDeviceConfiguration(usbdev->device_address, 0);
-		return USB_REGEN;
-	}
-	
-	USBDEBUG("SCSI Write %dSectors [StarSector:%d]\r\n", numSec, secStart); 	
 	return USB_REOK;
 }
 #endif
@@ -1062,7 +1082,7 @@ uint8_t usUsb_ReadDeviceCapacity(usb_device *usbdev, uint32_t *Blocks, uint32_t 
 #if defined(NXP_CHIP_18XX)
 	return NXP_ReadDeviceCapacity(usbdev, Blocks, BlockSize);
 #elif defined(LINUX)
-	*BlockSize = 512;
+	*BlockSize = DEF_SECTOR;
 	return USB_REOK;
 #endif
 }

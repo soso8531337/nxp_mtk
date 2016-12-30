@@ -719,7 +719,7 @@ static uint8_t usProtocol_aoaRecvPackage(mux_itunes *uSdev, void **buffer,
 	}
 	/*we just receive 512*number */
 	Recvsize = uSdev->max_payload-(tbuffer-uSdev->ib_buf);
-	Recvsize = Recvsize-Recvsize%512;
+	Recvsize = Recvsize-Recvsize%DEF_SECTOR;
 	Recvsize = min(Recvsize, (uSdev->protlen-uSdev->prohlen));
 	
 	PRODEBUG("Prepare Receive aoa Package %d[%d/%d]\r\n", 
@@ -891,7 +891,7 @@ static uint8_t usProtocol_iosRecvPackage(mux_itunes *uSdev, void **buffer,
 
 	/*we just receive 512*number */
 	sizeSend = uSdev->max_payload-(tbuffer-uSdev->ib_buf);
-	sizeSend = sizeSend-sizeSend%512;
+	sizeSend = sizeSend-sizeSend%DEF_SECTOR;
 	sizeSend = min(sizeSend, (uSdev->protlen-uSdev->prohlen));
 	PRODEBUG("Prepare Receive ios Package %d\r\n", sizeSend);
 	if((rc = usUsb_BlukPacketReceiveStream(&(uSdev->usbdev), tbuffer, 

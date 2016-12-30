@@ -73,7 +73,7 @@
 #define SDEBUGOUT(...)
 #endif
 
-#define USDISK_SECTOR		512
+#define USDISK_SECTOR		DEF_SECTOR
 #define OP_DIV(x)			((x)/USDISK_SECTOR)
 #define OP_MOD(x)			((x)%USDISK_SECTOR)
 
@@ -899,7 +899,14 @@ static int usStorage_Handle(void)
 			printf("SD/MMC Card enumeration failed! ..\r\n");
 			Chip_SDIF_PowerOff(LPC_SDMMC);
 			return;
-		}		
+		}
+	#ifdef LIMIT_RDONLY	
+		/* Check if Write Protected */
+		if (Chip_SDIF_CardWpOn(LPC_SDMMC)){
+			printf("SDMMC Card is write protected!, We Think It Failed..\r\n");
+			return ;
+		}
+	#endif
 		printf("SD/MMC Acquire Finish! ..\r\n");
 		if(usDisk_DeviceDetect(USB_CARD, (void*)&SDCardInfo)){
 			printf("SD/MMC Device Detect Failed\r\n");

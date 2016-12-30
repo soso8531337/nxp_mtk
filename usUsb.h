@@ -170,6 +170,7 @@ typedef  struct{
 	uint8_t  RevisionID[4];
 }SCSI_Inquiry_t;
 
+#define DEF_SECTOR		(512)
 enum{
 	USB_REOK=0,
 	USB_REPARA,

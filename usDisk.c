@@ -177,11 +177,6 @@ static uint8_t usDisk_DeviceDetectCard(uint8_t type, void *os_priv)
 	usb_device *usbdev = &(pDiskInfo->diskdev);
 	usbdev->usb_type = type;
 
-    /* Check if Write Protected */
-	if (Chip_SDIF_CardWpOn(LPC_SDMMC)){
-		printf("SDMMC Card is write protected!, so tests can not continue..\r\n");
-		return DISK_REGEN;
-	}
     /* Read Card information */
 	pDiskInfo->Blocks = sdinfo->card_info.blocknr;
 	pDiskInfo->BlockSize = sdinfo->card_info.block_len;
@@ -190,9 +185,6 @@ static uint8_t usDisk_DeviceDetectCard(uint8_t type, void *os_priv)
 	pDiskInfo->disk_cap = (int64_t)pDiskInfo->BlockSize *pDiskInfo->Blocks;
 	printf("SD Card Enumerated. [Num:%d Blocks:%d BlockSzie:%u Cap:%lld]\r\n",
 			pDiskInfo->disknum, pDiskInfo->Blocks, pDiskInfo->BlockSize, pDiskInfo->disk_cap);
-
-	/*set os_priv*/
-	usUsb_Init(usbdev, os_priv);
 
 	return DISK_REOK;	
 }
@@ -449,7 +441,7 @@ uint8_t usDisk_DeviceDetect(uint8_t type, void *os_priv)
 		DSKDEBUG("Disk Capacity = %lld Bytes", disk_cap);
 		close(dev_fd);
 		pDiskInfo->disk_cap = disk_cap;
-		pDiskInfo->BlockSize = 512;
+		pDiskInfo->BlockSize = DEF_SECTOR;
 		pDiskInfo->Blocks = disk_cap/pDiskInfo->BlockSize;
 		return DISK_REOK;
 	}
@@ -534,43 +526,47 @@ static int8_t  usDisk_FindStorage(int16_t wlun)
 
 uint8_t usDisk_DiskReadSectors(void *buff, int16_t wlun, uint32_t secStart, uint32_t numSec)
 {
+	int8_t cwlun = -1;
+
 	if(!buff || wlun > STOR_MAX){
 		DSKDEBUG("DiskReadSectors Failed[DiskNum:%d].\r\n", wlun);
 		return DISK_REPARA;
 	}
-	if(usDisk_FindStorage(wlun) < 0){
+	if((cwlun = usDisk_FindStorage(wlun)) < 0){
 		return DISK_REGEN;
 	}
-	if(usUsb_DiskReadSectors(&(uDinfo[wlun].diskdev), 
-			buff, secStart,numSec, uDinfo[wlun].BlockSize)){
+	if(usUsb_DiskReadSectors(&(uDinfo[cwlun].diskdev), 
+			buff, secStart,numSec, uDinfo[cwlun].BlockSize)){
 		DSKDEBUG("DiskReadSectors Failed[DiskNum:%d secStart:%d numSec:%d].\r\n", 
-						uDinfo[wlun].disknum, secStart, numSec);
+						uDinfo[cwlun].disknum, secStart, numSec);
 		return DISK_REGEN;
 	}
 	
 	DSKDEBUG("DiskReadSectors Successful[DiskNum:%d secStart:%d numSec:%d].\r\n", 
-					uDinfo[wlun].disknum, secStart, numSec);
+					uDinfo[cwlun].disknum, secStart, numSec);
 	return DISK_REOK;
 }
 
 uint8_t usDisk_DiskWriteSectors(void *buff, int16_t wlun, uint32_t secStart, uint32_t numSec)
 {
+	int8_t cwlun = -1;
+
 	if(!buff || wlun > STOR_MAX){
 		DSKDEBUG("DiskWriteSectors Failed[DiskNum:%d].\r\n", wlun);
 		return DISK_REPARA;
 	}
-	if(usDisk_FindStorage(wlun) < 0){
+	if((cwlun = usDisk_FindStorage(wlun)) < 0){
 		return DISK_REGEN;
 	}	
-	if(usUsb_DiskWriteSectors(&(uDinfo[wlun].diskdev), 
-				buff, secStart,numSec, uDinfo[wlun].BlockSize)){
+	if(usUsb_DiskWriteSectors(&(uDinfo[cwlun].diskdev), 
+				buff, secStart,numSec, uDinfo[cwlun].BlockSize)){
 		DSKDEBUG("DiskWriteSectors Failed[DiskNum:%d secStart:%d numSec:%d].\r\n", 
-						uDinfo[wlun].disknum, secStart, numSec);
+						uDinfo[cwlun].disknum, secStart, numSec);
 		return DISK_REGEN;
 	}
 	
 	DSKDEBUG("DiskWriteSectors Successful[DiskNum:%d secStart:%d numSec:%d].\r\n", 
-					uDinfo[wlun].disknum, secStart, numSec);
+					uDinfo[cwlun].disknum, secStart, numSec);
 	return DISK_REOK;	
 }
 
@@ -587,18 +583,18 @@ uint8_t usDisk_DiskNum(void)
 
 uint8_t usDisk_DiskInquiry(int16_t wlun, struct scsi_inquiry_info *inquiry)
 {
-	int8_t cursor;
+	int8_t cwlun;
 	if(!inquiry){
 		DSKDEBUG("usDisk_DiskInquiry Parameter Error\r\n");
 		return DISK_REPARA;
 	}	
 	memset(inquiry, 0, sizeof(struct scsi_inquiry_info));
-	if((cursor = usDisk_FindStorage(wlun)) < 0){
+	if((cwlun = usDisk_FindStorage(wlun)) < 0){
 		return DISK_REPARA;
 	}
 	memset(inquiry, 0, sizeof(struct scsi_inquiry_info));
 	/*Init Other Info*/
-	inquiry->size = uDinfo[cursor].disk_cap;
+	inquiry->size = uDinfo[cwlun].disk_cap;
 	strcpy(inquiry->product, STOR_DFT_PRO);
 	strcpy(inquiry->vendor, STOR_DFT_VENDOR);
 	strcpy(inquiry->serial, "1234567890abcdef");
