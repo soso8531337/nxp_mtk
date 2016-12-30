@@ -365,7 +365,7 @@ static uint8_t NXP_Init(usb_device *usbdev, void *os_priv)
 	}
 	usbdev->os_priv = os_priv;
 
-	if(usbdev->usb_type == USB_DISK){
+	if(usbdev->usb_type != USB_CARD){
 		MSInterfaceInfo = (USB_ClassInfo_MS_Host_t *)(os_priv);
 		/*Just set device_address == PortNumber*/
 		usbdev->device_address  = MSInterfaceInfo->Config.PortNumber;

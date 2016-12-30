@@ -1456,6 +1456,7 @@ uint8_t usProtocol_DeviceDetect(void *os_priv)
 	/*We need to memset*/
 	memset(&uSinfo, 0, sizeof(uSinfo));
 	/*set os_priv*/
+	usbdev->usb_type =  USB_PHONE;
 	usUsb_Init(usbdev, os_priv);
 	/*GEt device description*/
 	memset(&DeviceDescriptorData, 0, sizeof(USB_StdDesDevice_t));
