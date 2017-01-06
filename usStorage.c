@@ -392,6 +392,44 @@ static int usStorage_sendHEADBUF(struct scsi_head *header)
 
 	return 0;
 }
+
+/*Just For Test*/
+static int usStorage_Handle2(void)
+{
+	uint8_t *buffer = NULL;
+	uint32_t size = 0;
+	uint32_t secCount = 1, addr = 0;
+	
+#define TYPE_SDCARD		0
+#define TYPE_HDD			1	
+	printf("Now Test USB<----->SDMMC!!\r\n");
+	
+	while(1){
+		if(usProtocol_GetAvaiableBuffer((void **)&buffer, &size)){
+			printf("usProtocol_GetAvaiableBuffer Failed\r\n");
+			die(1);
+		}
+		if(secCount == 128){
+			printf("Reset SecCount to 1\r\n");
+			secCount = 1;
+		}
+		if(usDisk_DiskReadSectors(buffer, TYPE_HDD, addr, secCount)){
+			printf("Read Sector Error[addr:%d  SectorCount:%d]\r\n",
+						addr, secCount);
+			die(1);
+		}
+		/*Write to SDCard*/
+		if(usDisk_DiskWriteSectors(buffer, TYPE_SDCARD, addr, secCount) != 0){
+			printf("Write Sector Error[addr:%d  SectorCount:%d]\r\n",
+						addr, secCount);
+			die(1);
+		}
+		printf("Test %uSector Addr: %u Finish....\r\n", secCount, addr);
+		addr += secCount;
+		secCount++;
+	}
+}
+
 #endif
 
 /*
@@ -853,7 +891,6 @@ static int usStorage_Handle(void)
 
 	return 0;
 }
-
 
 /*****************************************************************************
  * Public functions

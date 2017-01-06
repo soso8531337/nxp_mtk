@@ -356,6 +356,35 @@ static uint8_t NXP_ClaimInterface(usb_device *usbdev, nxp_clminface*cPrivate)
 	usbdev->ep_out = MSInterfaceInfo->Config.DataOUTPipeNumber;
 	return USB_REOK;
 }
+
+static void NXP_SdcardWriteCheck(void *buff, uint32_t secStart, uint32_t numSec)
+{
+	uint8_t secBuf[512];
+	uint32_t startCur;
+	uint32_t diffCur;
+	
+	for(startCur = 0; startCur < numSec; startCur++){
+		int32_t act_read;
+		act_read =  Chip_SDMMC_ReadBlocks(LPC_SDMMC, secBuf, secStart+startCur, 1);
+		if(!act_read){
+			printf("Error reading SDCard\r\n");			
+			return ;
+		}
+		uint8_t *diffbuf = (uint8_t *)buff + startCur*512;
+		for(diffCur = 0; diffCur < 512; diffCur++){
+			if(diffbuf[diffCur] != secBuf[diffCur]){
+				printf("Data Not Same===>ErrorSec:%d SecStart:%d NumSec:%d>>Blow is detail Sector:\r\n", startCur, secStart, numSec);
+				usUsb_Print(diffbuf, 512);
+				printf("=================================================");
+				usUsb_Print(secBuf, 512);
+				printf("\r\n\r\n");
+				break;
+			}
+		}
+	}
+	printf("Data Check Finish SecStart:%d NumSec:%d\r\n", secStart, numSec);
+}
+
 static uint8_t NXP_Init(usb_device *usbdev, void *os_priv)
 {
 	USB_ClassInfo_MS_Host_t *MSInterfaceInfo;
