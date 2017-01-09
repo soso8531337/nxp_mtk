@@ -20,7 +20,12 @@
 #include <ctype.h>
 #include <stdio.h>
 #elif defined(LINUX)
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
 #include <libusb-1.0/libusb.h>
+#include <sys/ioctl.h>
+#include <errno.h>
 #endif
 
 /*****************************************************************************
@@ -1103,6 +1108,35 @@ uint8_t usProtocol_SwitchAOAMode(usb_device *usbdev)
 	return PROTOCOL_REOK;
 }
 #elif defined(LINUX)
+typedef enum{
+	OCTL_DIS_USB_SW = 0X01,
+	OCTL_ENABLE_USB_SW,
+} USBPowerValue;
+#define USB_POWER_CONFIG		"/dev/vs_control"
+static uint8_t LINUX_USBPowerControl(USBPowerValue value)
+{
+	int fd;
+
+	if(access(USB_POWER_CONFIG, F_OK)){
+		PRODEBUG("No Need To Setup USB Power[%s Not Exist]\r\n", USB_POWER_CONFIG);
+		return PROTOCOL_REOK;
+	}
+
+	fd= open(USB_POWER_CONFIG, O_RDWR | O_NONBLOCK);
+	if (fd < 0 && errno == EROFS)
+		fd = open(USB_POWER_CONFIG, O_RDONLY | O_NONBLOCK);
+	if (fd<0){
+		PRODEBUG("Open %s Failed:%s", USB_POWER_CONFIG, strerror(errno));
+		return PROTOCOL_REGEN; 
+	}
+	if(ioctl(fd, value)){
+		PRODEBUG("IOCTL Failed:%s", strerror(errno));
+	}
+	close(fd);
+	PRODEBUG("IOCTL Successful:%d", value);
+	return PROTOCOL_REOK;
+}
+
 static uint8_t LINUX_SwitchAOAMode(libusb_device* dev)
 {
 	int res=-1, j;
@@ -1129,7 +1163,9 @@ static uint8_t LINUX_SwitchAOAMode(libusb_device* dev)
 		if(config->bNumInterfaces > 1 &&
 					intf->bInterfaceClass != INTERFACE_CLASS_AOA){
 			continue;
-		}		
+		}
+		/*Before switch AOA Mode, we need to notify kernel*/
+		LINUX_USBPowerControl(OCTL_DIS_USB_SW);
 		/* Now asking if device supports Android Open Accessory protocol */
 		res = libusb_control_transfer(handle,
 					      LIBUSB_ENDPOINT_IN |
@@ -1724,6 +1760,11 @@ uint8_t usProtocol_DeviceDetect(void *os_priv)
 		/*set usbdev*/
 		memcpy(&uSinfo.itunes.usbdev, &usb_phone, sizeof(usb_device));
 		libusb_free_device_list(devs, 1);
+
+		/*we need to notify kernel found aoa device*/
+		if(PhoneType == PRO_ANDROID){
+			LINUX_USBPowerControl(OCTL_ENABLE_USB_SW);
+		}
 		PRODEBUG("Phone Change to CONNCETING State.\r\n");
 		return PROTOCOL_REOK;		
 	}
