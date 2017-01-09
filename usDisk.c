@@ -235,6 +235,17 @@ uint8_t usDisk_DeviceDisConnect(uint8_t type, void *os_priv)
 #define BLKGETSIZE64 _IOR(0x12,114,size_t)
 #endif
 
+#define sys_offsetof(TYPE, MEMBER) ((size_t) &((TYPE *)0)->MEMBER)
+
+/* Purpose: container_of - cast a member of a structure out to the containing structure
+ * In     : ptr   : the pointer to the member.
+ *          type  : the type of the container struct this is embedded in.
+ *          member: the name of the member within the struct.
+ */
+#define container_of(ptr, type, member) ({ \
+        const typeof( ((type *)0)->member ) *__mptr = (ptr); \
+        (type *)( (char *)__mptr - sys_offsetof(type,member) );})
+
 #define BLKRASIZE			(1024)
 #define SYS_CLA_BLK 	"/sys/class/block"
 #define SYS_BLK		"/sys/block"
@@ -478,7 +489,13 @@ uint8_t usDisk_DeviceDisConnect(uint8_t type, void *os_priv)
 		return DISK_REPARA;
 	}
 	for(curdisk = 0; curdisk < STOR_MAX; curdisk++){
-		linxDiskinfo = (diskLinux *)(uDinfo[curdisk].diskdev.os_priv);
+		/*We need to use dev[0] represent first element address, if use dev, 
+			it represent arrary*/
+		if(!uDinfo[curdisk].diskdev.os_priv){
+			continue;
+		}
+		linxDiskinfo = container_of((char*)(uDinfo[curdisk].diskdev.os_priv),
+										diskLinux, dev[0]);
 		if(linxDiskinfo &&
 				!strcmp(linxDiskinfo->dev, os_priv)){
 			DSKDEBUG("Disk DiskConncect [%s]\r\n",  os_priv);
@@ -488,6 +505,8 @@ uint8_t usDisk_DeviceDisConnect(uint8_t type, void *os_priv)
 			return DISK_REOK;
 		}
 	}
+	
+	DSKDEBUG("Disk Not Found [%s]\r\n", os_priv);
 	return DISK_REGEN;
 }
 
