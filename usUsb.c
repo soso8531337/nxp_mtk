@@ -14,8 +14,10 @@
 #include "usSys.h"
 
 #if defined(NXP_CHIP_18XX)
-#include "MassStorageHost.h"
-#include "fsusb_cfg.h"
+#include "board.h"
+#include "USB.h"
+#include <ctype.h>
+#include <stdio.h>
 #elif defined(LINUX)
 #include <stdio.h>
 #include <stdlib.h>

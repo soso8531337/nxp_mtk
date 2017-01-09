@@ -40,7 +40,8 @@
 #if defined(NXP_CHIP_18XX)
 #include <string.h>
 #include "board.h"
-#include "MassStorageHost.h"
+#include "USB.h"
+#include <ctype.h>
 #include "chip.h"
 #include "FreeRTOS.h"
 #include "task.h"

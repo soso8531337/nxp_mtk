@@ -16,7 +16,10 @@
 #include "usFirmware.h"
 #include "usProtocol.h"
 #if defined(NXP_CHIP_18XX)
-#include "MassStorageHost.h"
+#include "board.h"
+#include "USB.h"
+#include <ctype.h>
+#include <stdio.h>
 #elif defined(LINUX)
 #include <stdio.h>
 #include <errno.h>
