@@ -93,6 +93,8 @@ uint8_t usbWriteBuffer[USB_WRTE];
 #define NXP_USB_PHONE 	0
 #define NXP_USB_DISK	1
 
+/*Plug flag*/
+volatile uint8_t notifyPhone = 0;
 /** LPCUSBlib Mass Storage Class driver interface configuration and state information. This structure is
  *  passed to all Mass Storage Class driver functions, so that multiple instances of the same class
  *  within a device can be differentiated from one another.
@@ -818,6 +820,7 @@ static int usStorage_diskLUN(struct scsi_head *header)
 	uint8_t *buffer = NULL, rc = 0;
 	uint32_t size = 0, total = 0;
 
+	printf("Disk Number-->%d\r\n", num);
 	if(usProtocol_GetAvaiableBuffer((void **)&buffer, &size)){
 		SDEBUGOUT("usProtocol_GetAvaiableBuffer Failed\r\n");
 		return 1;
@@ -901,6 +904,43 @@ static int usStorage_Handle(void)
  *  calls the filesystem function to read files from USB Disk
  *Ustorage Project by Szitman 20161022
  */
+static uint8_t NXP_setDiskNotifyTag(void)
+{
+	if(notifyPhone++ == 127){
+		notifyPhone = 1;
+	}
+	return notifyPhone;
+}
+
+static uint8_t NXP_getDiskNotifyTag(void)
+{
+	return notifyPhone;
+}
+
+static void NXP_resetDiskNotifyTag(void)
+{
+	notifyPhone = 0;
+}
+
+static uint8_t	NXP_notifyDiskChange(void)
+{
+	struct scsi_head header;
+	static uint32_t wtag = 0;
+
+	header.head = SCSI_DEVICE_MAGIC;
+	header.ctrid = SCSI_GET_LUN;
+
+	header.wtag = wtag++;
+	header.len = 1;
+
+	if(usStorage_diskLUN(&header) != 0){
+		printf("Get Disk Lun Failed\r\n");
+	}
+	printf("Notify Disk Change to Phone Successful....\r\n");
+
+	return 0;
+}
+
  /*
 **return value:
 *0: no usb disk
@@ -949,14 +989,16 @@ static int usStorage_Handle(void)
 			printf("SD/MMC Device Detect Failed\r\n");
 			return;
 		}
-		sd_plugin = 1;
+		sd_plugin = 1;		
+		NXP_setDiskNotifyTag();
 	}else if(SD_status && sd_plugin == 1){
 		/*SD Card Out*/		
 		printf("SD/MMC Card Plug Out! ..\r\n");
 		Chip_SDIF_PowerOff(LPC_SDMMC);
 		sd_plugin = 0;
 		usDisk_DeviceDisConnect(USB_CARD, NULL);		
-		App_SDMMC_Init();
+		App_SDMMC_Init();		
+		NXP_setDiskNotifyTag();
 	}
 }
 
@@ -994,6 +1036,11 @@ void vs_main(void *pvParameters)
 			continue;
 		}
 		usStorage_Handle();
+		if(NXP_getDiskNotifyTag()){
+			printf("We Need To Notify Phone Disk Changed.....\r\n");
+			NXP_notifyDiskChange();			
+			NXP_resetDiskNotifyTag();
+		}
 	}
 }
 
@@ -1004,7 +1051,7 @@ void vs_main(void *pvParameters)
 void EVENT_USB_Host_DeviceAttached(const uint8_t corenum)
 {
 	if(corenum == NXP_USB_DISK){
-		printf(("Disk Attached on port %d\r\n"), corenum);	
+		printf(("Disk Attached on port %d\r\n"), corenum);
 	}else{
 		printf(("Phone Attached on port %d\r\n"), corenum);	
 	}
@@ -1019,6 +1066,7 @@ void EVENT_USB_Host_DeviceUnattached(const uint8_t corenum)
 	memset(&(UStorage_Interface[corenum].State), 0x00, sizeof(UStorage_Interface[corenum].State));
 	if(corenum == NXP_USB_DISK){
 		usDisk_DeviceDisConnect(USB_DISK, NULL);
+		NXP_setDiskNotifyTag();
 	}else{
 		usProtocol_DeviceDisConnect();
 	}
@@ -1031,7 +1079,8 @@ void EVENT_USB_Host_DeviceEnumerationComplete(const uint8_t corenum)
 {
 	if(corenum == NXP_USB_DISK){
 		SDEBUGOUT(("Disk Enumeration on port %d\r\n"), corenum);
-		usDisk_DeviceDetect(USB_DISK, &UStorage_Interface[corenum]);
+		usDisk_DeviceDetect(USB_DISK, &UStorage_Interface[corenum]);		
+		NXP_setDiskNotifyTag();
 	}else if(corenum == NXP_USB_PHONE){
 		SDEBUGOUT(("Phone Enumeration on port %d\r\n"), corenum);
 		usProtocol_DeviceDetect(&UStorage_Interface[corenum]);	

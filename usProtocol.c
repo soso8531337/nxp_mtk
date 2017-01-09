@@ -1744,6 +1744,10 @@ uint8_t usProtocol_GetAvaiableBuffer(void **buffer, uint32_t *size)
 		*buffer = uSinfo.itunes.ib_buf;
 		*size = uSinfo.itunes.max_payload;
 	}
+	if(*size == 0){
+		printf("No Avaiable Buffer:%p Size:%d\r\n", *buffer, *size);
+		return PROTOCOL_DISCONNECT;
+	}
 	PRODEBUG("Avaiable Buffer:%p Size:%d\r\n", *buffer, *size);
 
 	return PROTOCOL_REOK;
