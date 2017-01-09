@@ -26,6 +26,7 @@ uint8_t usDisk_DiskReadSectors(void *buff, int16_t wlun, uint32_t secStart, uint
 uint8_t usDisk_DiskWriteSectors(void *buff, int16_t wlun, uint32_t secStart, uint32_t numSec);
 uint8_t usDisk_DiskNum(void);
 uint8_t usDisk_DiskInquiry(int16_t wlun, struct scsi_inquiry_info *inquiry);
+uint8_t usDisk_cacheSYNC(int16_t wlun);
 
 #ifdef __cplusplus
 }

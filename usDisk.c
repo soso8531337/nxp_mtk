@@ -218,7 +218,10 @@ uint8_t usDisk_DeviceDisConnect(uint8_t type, void *os_priv)
 	}
 	return DISK_REOK;
 }
-
+uint8_t usDisk_cacheSYNC(int16_t wlun)
+{
+	return DISK_REOK;
+}
 #elif defined(LINUX)
 
 #ifndef BLKROSET
@@ -508,6 +511,28 @@ uint8_t usDisk_DeviceDisConnect(uint8_t type, void *os_priv)
 	
 	DSKDEBUG("Disk Not Found [%s]\r\n", os_priv);
 	return DISK_REGEN;
+}
+
+uint8_t usDisk_cacheSYNC(int16_t wlun)
+{
+	diskLinux *linxDiskinfo = NULL;
+
+	if(wlun >= STOR_MAX){
+		DSKDEBUG("Cache Disk Error:%d\r\n", wlun);
+		return DISK_REPARA;
+	}
+	if(!uDinfo[wlun].diskdev.os_priv){
+		DSKDEBUG("Cache Disk May Be PlugOut:%d\r\n", wlun);
+		return DISK_REGEN;
+	}
+	linxDiskinfo = container_of((char*)(uDinfo[wlun].diskdev.os_priv),
+									diskLinux, dev[0]);
+	fsync(linxDiskinfo->diskFD);
+
+	DSKDEBUG("ReWrite Cache To DiskFD:%d Successful[wlun:%d]...\r\n", 
+					linxDiskinfo->diskFD, wlun);
+
+	return DISK_REOK;
 }
 
 #endif

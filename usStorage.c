@@ -842,6 +842,17 @@ static int usStorage_diskLUN(struct scsi_head *header)
 	return 0;
 }
 
+static int usStorage_cacheSYNC(struct scsi_head *header)
+{
+	if(!header){
+		return 1;
+	}
+	usDisk_cacheSYNC(header->wlun);
+	usStorage_sendHEAD(header);
+
+	return 0;
+}
+
 static int usStorage_Handle(void)
 {	
 	uint8_t *buffer;
@@ -887,6 +898,8 @@ static int usStorage_Handle(void)
 			return usStorage_firmwareUP(buffer, size);
 		case SCSI_FIRMWARE_INFO:
 			return usStorage_firmwareINFO(&header);
+		case SCSI_SYNC_INFO:
+			return usStorage_cacheSYNC(&header);
 		default:
 			SDEBUGOUT("Unhandle Command\r\nheader:%x\r\nwtag:%d\r\n"
 						"ctrid:%d\r\naddr:%u\r\nlen:%d\r\nwlun:%d\r\n", header.head,
