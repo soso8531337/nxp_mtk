@@ -1193,7 +1193,7 @@ void notify_plug(uint8_t action)
 	if(action == notifyNONE){
 		return;
 	}
-
+	memset(&header, 0, PRO_HDR);
 	header.head = SCSI_DEVICE_MAGIC;
 	if(action == notifyADD){
 		header.ctrid = SCSI_INPUT;
@@ -1202,7 +1202,7 @@ void notify_plug(uint8_t action)
 	}
 
 	header.wtag = wtag++;
-	header.len = 1;
+	header.len = 0;
 
 	usStorage_sendHEAD(&header);
 }
