@@ -318,6 +318,16 @@ static int blockdev_readahead(char *devname, int readahead)
 	return 0;
 }
 
+static void dropCache(void)
+{
+	int dev_fd;
+
+	if((dev_fd = open(SYS_DROP_CACHE, O_WRONLY)) < 0 ||
+			write(dev_fd, "3", 1) <= 0){
+		DSKDEBUG("Drop Cache Failed[%s]...\r\n", strerror(errno));
+	}
+	close(dev_fd);
+}
 void usDisk_DeviceInit(void *os_priv)
 {
 	struct dirent *dent;
@@ -461,6 +471,9 @@ uint8_t usDisk_DeviceDetect(uint8_t type, void *os_priv)
 		pDiskInfo->disk_cap = disk_cap;
 		pDiskInfo->BlockSize = DEF_SECTOR;
 		pDiskInfo->Blocks = disk_cap/pDiskInfo->BlockSize;
+		/*Drop cache when the new sdcard insert*/
+		DSKDEBUG("Drop Cache Becasuse OF New SDCard Insert[%s]..\r\n", dev);
+		dropCache();
 		return DISK_REOK;
 	}
 
@@ -481,13 +494,8 @@ uint8_t usDisk_DeviceDetect(uint8_t type, void *os_priv)
 			pDiskInfo->Blocks, pDiskInfo->BlockSize, pDiskInfo->disk_cap);
 	close(dev_fd);
 	/*Drop cache when the new card insert*/
-	DSKDEBUG("Drop Cache Becasuse OF New Disk Insert[%s]..\r\n", dev);		
-	if((dev_fd = open(SYS_DROP_CACHE, O_WRONLY)) < 0 ||
-			write(dev_fd, "3", 1) <= 0){
-		DSKDEBUG("Drop Cache Failed[%s][wlun:%d]...\r\n", 
-							strerror(errno), dev);
-	}
-	close(dev_fd);
+	DSKDEBUG("Drop Cache Becasuse OF New Disk Insert[%s]..\r\n", dev);
+	dropCache();
 
 	return DISK_REOK;
 }
