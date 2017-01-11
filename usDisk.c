@@ -252,6 +252,7 @@ uint8_t usDisk_cacheSYNC(int16_t wlun)
 #define BLKRASIZE			(1024)
 #define SYS_CLA_BLK 	"/sys/class/block"
 #define SYS_BLK		"/sys/block"
+#define SYS_DROP_CACHE		"/proc/sys/vm/drop_caches"
 
 typedef struct  _diskLinux{
 	int diskFD;
@@ -478,6 +479,14 @@ uint8_t usDisk_DeviceDetect(uint8_t type, void *os_priv)
 	pDiskInfo->disk_cap *= blocksize;
 	DSKDEBUG("Disk Blocks = %u BlockSize = %u Disk Capacity=%lld\r\n", 
 			pDiskInfo->Blocks, pDiskInfo->BlockSize, pDiskInfo->disk_cap);
+	close(dev_fd);
+	/*Drop cache when the new card insert*/
+	DSKDEBUG("Drop Cache Becasuse OF New Disk Insert[%s]..\r\n", dev);		
+	if((dev_fd = open(SYS_DROP_CACHE, O_WRONLY)) < 0 ||
+			write(dev_fd, "3", 1) <= 0){
+		DSKDEBUG("Drop Cache Failed[%s][wlun:%d]...\r\n", 
+							strerror(errno), dev);
+	}
 	close(dev_fd);
 
 	return DISK_REOK;
