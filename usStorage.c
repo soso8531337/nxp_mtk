@@ -947,6 +947,9 @@ static uint8_t	NXP_notifyDiskChange(void)
 	header.wtag = wtag++;
 	header.len = 1;
 
+	header.relag = 0;
+	header.wlun = 0;
+	header.addr = 0;
 	if(usStorage_diskLUN(&header) != 0){
 		printf("Get Disk Lun Failed\r\n");
 	}
