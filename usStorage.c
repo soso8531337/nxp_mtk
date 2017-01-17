@@ -920,6 +920,10 @@ static int usStorage_Handle(void)
  */
 static uint8_t NXP_setDiskNotifyTag(void)
 {
+	if(USB_HostState[NXP_USB_PHONE] != HOST_STATE_Configured){
+		printf("No Phone Detected...\r\n");
+		return 0;
+	}
 	if(notifyPhone++ == 127){
 		notifyPhone = 1;
 	}
@@ -992,6 +996,8 @@ static uint8_t	NXP_notifyDiskChange(void)
 		if (!rc) {
 			printf("SD/MMC Card enumeration failed! ..\r\n");
 			Chip_SDIF_PowerOff(LPC_SDMMC);
+			/*ReInit SD Card, if not driver will down*/
+			SDMMC_Init();			
 			return;
 		}
 	#ifdef LIMIT_RDONLY	
@@ -1053,7 +1059,8 @@ void vs_main(void *pvParameters)
 			continue;
 		}
 		usStorage_Handle();
-		if(NXP_getDiskNotifyTag()){
+		if(USB_HostState[NXP_USB_PHONE] == HOST_STATE_Configured &&
+					NXP_getDiskNotifyTag()){
 			printf("We Need To Notify Phone Disk Changed.....\r\n");
 			NXP_notifyDiskChange();			
 			NXP_resetDiskNotifyTag();
@@ -1095,11 +1102,11 @@ void EVENT_USB_Host_DeviceUnattached(const uint8_t corenum)
 void EVENT_USB_Host_DeviceEnumerationComplete(const uint8_t corenum)
 {
 	if(corenum == NXP_USB_DISK){
-		SDEBUGOUT(("Disk Enumeration on port %d\r\n"), corenum);
+		printf("Disk Enumeration on port %d\r\n", corenum);
 		usDisk_DeviceDetect(USB_DISK, &UStorage_Interface[corenum]);		
 		NXP_setDiskNotifyTag();
 	}else if(corenum == NXP_USB_PHONE){
-		SDEBUGOUT(("Phone Enumeration on port %d\r\n"), corenum);
+		printf("Phone Enumeration on port %d\r\n", corenum);
 		usProtocol_DeviceDetect(&UStorage_Interface[corenum]);	
 	}else{
 		SDEBUGOUT("Unknown USB Port %d.\r\n", corenum);
