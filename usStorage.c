@@ -1113,6 +1113,7 @@ void EVENT_USB_Host_DeviceAttached(const uint8_t corenum)
 void EVENT_USB_Host_DeviceUnattached(const uint8_t corenum)
 {
 	printf(("\r\nDevice Unattached on port %d\r\n"), corenum);
+	Chip_CREG_DisableUSB0Phy();
 	memset(&(UStorage_Interface[corenum].State), 0x00, sizeof(UStorage_Interface[corenum].State));
 	if(corenum == NXP_USB_DISK){
 		usDisk_DeviceDisConnect(USB_DISK, NULL);
@@ -1120,6 +1121,8 @@ void EVENT_USB_Host_DeviceUnattached(const uint8_t corenum)
 	}else{
 		usProtocol_DeviceDisConnect();
 	}
+	sdmmc_waitms2(20);
+	usSys_init(corenum);
 }
 
 /** Event handler for the USB_DeviceEnumerationComplete event. This indicates that a device has been successfully
@@ -1141,13 +1144,13 @@ void EVENT_USB_Host_DeviceEnumerationComplete(const uint8_t corenum)
 /** Event handler for the USB_HostError event. This indicates that a hardware error occurred while in host mode. */
 void EVENT_USB_Host_HostError(const uint8_t corenum, const uint8_t ErrorCode)
 {
-	USB_Disable(corenum, USB_MODE_Host);
-
+	Chip_CREG_DisableUSB0Phy();
 	printf(("Host Mode Error\r\n"
 			  " -- Error port %d\r\n"
 			  " -- Error Code %d\r\n" ), corenum, ErrorCode);
-
-	die(0);
+	
+	sdmmc_waitms2(100);
+	usSys_init(corenum);
 }
 
 /** Event handler for the USB_DeviceEnumerationFailed event. This indicates that a problem occurred while
@@ -1157,6 +1160,7 @@ void EVENT_USB_Host_DeviceEnumerationFailed(const uint8_t corenum,
 											const uint8_t ErrorCode,
 											const uint8_t SubErrorCode)
 {
+	Chip_CREG_DisableUSB0Phy();
 	printf(("Dev Enum Error\r\n"
 			  " -- Error port %d\r\n"
 			  " -- Error Code %d\r\n"
@@ -1164,6 +1168,7 @@ void EVENT_USB_Host_DeviceEnumerationFailed(const uint8_t corenum,
 			  " -- In State %d\r\n" ),
 			 corenum, ErrorCode, SubErrorCode, USB_HostState[corenum]);
 	
+	sdmmc_waitms2(100);
 	usSys_init(corenum);
 	printf("Reinit Core:%d\r\n", corenum);
 }
