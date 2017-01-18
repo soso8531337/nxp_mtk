@@ -230,6 +230,25 @@ static void sdmmc_waitms(uint32_t time)
 	return;
 }
 
+static void sdmmc_waitms2(uint32_t time)
+{
+	/* In an RTOS, the thread would sleep allowing other threads to run.
+	   For standalone operation, we just spin on RI timer */
+	int32_t curr = (int32_t) Chip_RIT_GetCounter(LPC_RITIMER);
+	int32_t final = curr + ((SystemCoreClock / 1000) * time);
+
+	if (final == curr) return;
+
+	if ((final < 0) && (curr > 0)) {
+		while (Chip_RIT_GetCounter(LPC_RITIMER) < (uint32_t) final) {}
+	}
+	else {
+		while ((int32_t) Chip_RIT_GetCounter(LPC_RITIMER) < final) {}
+	}
+
+	return;
+}
+
 /**
  * @brief	Sets up the SD event driven wakeup
  * @param	bits : Status bits to poll for command completion
@@ -1017,11 +1036,14 @@ static uint8_t	NXP_notifyDiskChange(void)
 	}else if(SD_status && sd_plugin == 1){
 		/*SD Card Out*/		
 		printf("SD/MMC Card Plug Out! ..\r\n");
+		Chip_SDIF_DeInit(LPC_SDMMC);
 		Chip_SDIF_PowerOff(LPC_SDMMC);
 		sd_plugin = 0;
 		usDisk_DeviceDisConnect(USB_CARD, NULL);		
 		App_SDMMC_Init();		
 		NXP_setDiskNotifyTag();
+		/*We Need to Reinit SD Driver for safe*/
+		SDMMC_Init();
 	}
 }
 
@@ -1049,6 +1071,10 @@ void vs_main(void *pvParameters)
 			continue;
 		}
 		while (USB_HostState[NXP_USB_PHONE] != HOST_STATE_Configured) {
+			if(USB_HostState[NXP_USB_PHONE] == HOST_STATE_Unattached){
+				printf("Phone Unttached...\r\n");
+				break;
+			}
 			USB_USBTask(NXP_USB_PHONE, USB_MODE_Host);
 			continue;
 		}
@@ -1117,7 +1143,7 @@ void EVENT_USB_Host_HostError(const uint8_t corenum, const uint8_t ErrorCode)
 {
 	USB_Disable(corenum, USB_MODE_Host);
 
-	SDEBUGOUT(("Host Mode Error\r\n"
+	printf(("Host Mode Error\r\n"
 			  " -- Error port %d\r\n"
 			  " -- Error Code %d\r\n" ), corenum, ErrorCode);
 
@@ -1131,13 +1157,15 @@ void EVENT_USB_Host_DeviceEnumerationFailed(const uint8_t corenum,
 											const uint8_t ErrorCode,
 											const uint8_t SubErrorCode)
 {
-	SDEBUGOUT(("Dev Enum Error\r\n"
+	printf(("Dev Enum Error\r\n"
 			  " -- Error port %d\r\n"
 			  " -- Error Code %d\r\n"
 			  " -- Sub Error Code %d\r\n"
 			  " -- In State %d\r\n" ),
 			 corenum, ErrorCode, SubErrorCode, USB_HostState[corenum]);
-
+	
+	usSys_init(corenum);
+	printf("Reinit Core:%d\r\n", corenum);
 }
 #elif defined(LINUX)
 

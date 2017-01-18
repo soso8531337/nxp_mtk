@@ -434,8 +434,9 @@ uint8_t NXP_DiskReadSectors(usb_device *usbdev,
 			ret = MS_Host_ReadDeviceBlocks((USB_ClassInfo_MS_Host_t*)usbdev->os_priv, 0, 
 								curSec, numSecPer, BlockSize, (void *)(curBuf+already*BlockSize));
 			if(ret) {
-				USBDEBUG("Error reading device block. ret = %d\r\n", ret);
-				USB_Host_SetDeviceConfiguration(usbdev->device_address, 0);
+				printf("Error reading device block. ret = %d\r\n", ret);				
+				/*Read Error not Reset Device Configuration modify by zhangwei 20170118*/
+				//USB_Host_SetDeviceConfiguration(usbdev->device_address, 0);
 				return USB_REGEN;
 			}
 		}
@@ -475,8 +476,9 @@ uint8_t NXP_DiskWriteSectors(usb_device *usbdev,
 			ret = MS_Host_WriteDeviceBlocks((USB_ClassInfo_MS_Host_t*)usbdev->os_priv, 0, 
 								curSec, numSecPer, BlockSize, (void *)(curBuf+already*BlockSize));
 			if(ret) {
-				USBDEBUG("Error writing device block. ret = %d\r\n", ret);
-				USB_Host_SetDeviceConfiguration(usbdev->device_address, 0);
+				printf("Error writing device block. ret = %d\r\n", ret);				
+				/*Write Error not Reset Device Configuration modify by zhangwei 20170118*/
+				//USB_Host_SetDeviceConfiguration(usbdev->device_address, 0);
 				return USB_REGEN;
 			}
 		}
@@ -514,8 +516,9 @@ uint8_t NXP_DiskReadSectors(usb_device *usbdev,
 		ret = MS_Host_ReadDeviceBlocks((USB_ClassInfo_MS_Host_t*)usbdev->os_priv, 0, 
 				secStart, numSec, BlockSize, buff);
 		if(ret) {
-			USBDEBUG("Error reading device block. ret = %d\r\n", ret);
-			USB_Host_SetDeviceConfiguration(usbdev->device_address, 0);
+			printf("Error reading device block. ret = %d\r\n", ret);
+			/*Read Error not Reset Device Configuration modify by zhangwei 20170118*/
+			//USB_Host_SetDeviceConfiguration(usbdev->device_address, 0);
 			return USB_REGEN;
 		}	
 		USBDEBUG("SCSI Read %dSectors [StarSector:%d]\r\n", numSec, secStart); 	
@@ -548,8 +551,9 @@ uint8_t NXP_DiskWriteSectors(usb_device *usbdev,
 		ret = MS_Host_WriteDeviceBlocks((USB_ClassInfo_MS_Host_t*)usbdev->os_priv, 0, 
 						secStart, numSec, BlockSize, buff);
 		if(ret) {
-			USBDEBUG("Error writing device block. ret = %d\r\n", ret);		
-			USB_Host_SetDeviceConfiguration(usbdev->device_address, 0);
+			printf("Error writing device block. ret = %d\r\n", ret);			
+			/*Write Error not Reset Device Configuration modify by zhangwei 20170118*/
+			//USB_Host_SetDeviceConfiguration(usbdev->device_address, 0);
 			return USB_REGEN;
 		}
 		USBDEBUG("SCSI Write %dSectors [StarSector:%d]\r\n", numSec, secStart); 	
