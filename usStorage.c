@@ -82,11 +82,15 @@
 #define USB_WRTE			(256*1024)
 #define USB_WRTESEC	512     /*USB_WRTE/512*/
 #else
-#define USB_WRTE			(64*1024)
-#define USB_WRTESEC	128    /*USB_WRTE/512*/
+#define USB_WRTE			(32*1024)
+#define USB_WRTESEC	64    /*USB_WRTE/512*/
 #endif
 #ifdef ENOUGH_MEMORY
+#if defined(NXP_CHIP_18XX)
+uint8_t usbWriteBuffer[USB_WRTE] __attribute__((section ("USB_RAM1"), zero_init));
+#else
 uint8_t usbWriteBuffer[USB_WRTE];
+#endif
 #endif
 
 #if defined(NXP_CHIP_18XX)
@@ -1113,7 +1117,8 @@ void EVENT_USB_Host_DeviceAttached(const uint8_t corenum)
 void EVENT_USB_Host_DeviceUnattached(const uint8_t corenum)
 {
 	printf(("\r\nDevice Unattached on port %d\r\n"), corenum);
-	Chip_CREG_DisableUSB0Phy();
+	//Chip_CREG_DisableUSB0Phy();
+	USB_Disable(corenum, USB_MODE_Host);
 	memset(&(UStorage_Interface[corenum].State), 0x00, sizeof(UStorage_Interface[corenum].State));
 	if(corenum == NXP_USB_DISK){
 		usDisk_DeviceDisConnect(USB_DISK, NULL);
@@ -1144,7 +1149,9 @@ void EVENT_USB_Host_DeviceEnumerationComplete(const uint8_t corenum)
 /** Event handler for the USB_HostError event. This indicates that a hardware error occurred while in host mode. */
 void EVENT_USB_Host_HostError(const uint8_t corenum, const uint8_t ErrorCode)
 {
-	Chip_CREG_DisableUSB0Phy();
+	//Chip_CREG_DisableUSB0Phy();
+	USB_Disable(corenum, USB_MODE_Host);
+	
 	printf(("Host Mode Error\r\n"
 			  " -- Error port %d\r\n"
 			  " -- Error Code %d\r\n" ), corenum, ErrorCode);
@@ -1160,7 +1167,8 @@ void EVENT_USB_Host_DeviceEnumerationFailed(const uint8_t corenum,
 											const uint8_t ErrorCode,
 											const uint8_t SubErrorCode)
 {
-	Chip_CREG_DisableUSB0Phy();
+	//Chip_CREG_DisableUSB0Phy();
+	USB_Disable(corenum, USB_MODE_Host);
 	printf(("Dev Enum Error\r\n"
 			  " -- Error port %d\r\n"
 			  " -- Error Code %d\r\n"

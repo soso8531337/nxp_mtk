@@ -19,9 +19,9 @@ extern "C" {
 //#define DEBUG_ENABLE1    1
 //#endif
 
-#if defined(LINUX)
+//#if defined(LINUX)
 #define ENOUGH_MEMORY	1
-#endif
+//#endif
 /** @defgroup Mass_Storage_Host_Definition Main definitions
  * @ingroup Mass_Storage_Host_18xx43xx Mass_Storage_Host_17xx40xx
  * @{
