@@ -73,7 +73,7 @@ enum{
 enum{	
 	STOR_CARD=0,
 	STOR_HDD=1,
-	STOR_MAX,
+	STOR_MAX=2,
 };
 typedef struct {
 	uint8_t disknum;
