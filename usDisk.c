@@ -393,7 +393,7 @@ void usDisk_DeviceInit(void *os_priv)
 			usDisk_DeviceDetect(USB_DISK, (void*)devbuf);
 		}
 		DSKDEBUG("ADD Device [%s] To Storage List\r\n", dent->d_name);
-		break;
+		//break;
 	}
 
 	closedir(dir);
