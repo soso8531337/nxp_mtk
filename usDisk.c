@@ -6,9 +6,6 @@
  * Copyright(C) Szitman, 2016
  * All rights reserved.
  */
-#if defined(NXP_CHIP_18XX)
-#pragma arm section code ="USB_RAM2", rwdata="USB_RAM2"
-#endif
 #include <stdint.h>
 #include "usDisk.h"
 #include "usUsb.h"
@@ -126,6 +123,7 @@ static uint8_t usDisk_DeviceDetectHDD(uint8_t type, void *os_priv)
 	memset(&DeviceDescriptorData, 0, sizeof(USB_StdDesDevice_t));
 	if(usUsb_GetDeviceDescriptor(usbdev, &DeviceDescriptorData)){
 		DSKDEBUG("usUusb_GetDeviceDescriptor Failed\r\n");
+		memset(pDiskInfo, 0, sizeof(usDisk_info));
 		return DISK_REGEN;
 	}
 	
@@ -136,30 +134,40 @@ static uint8_t usDisk_DeviceDetectHDD(uint8_t type, void *os_priv)
 	/*Claim Interface*/
 	nxpcall.bNumConfigurations = DeviceDescriptorData.bNumConfigurations;
 	if(usUsb_ClaimInterface(usbdev, &nxpcall)){
-		DSKDEBUG("Attached Device Not a Valid DiskDevice.\r\n");
+		DSKDEBUG("Attached Device Not a Valid DiskDevice.\r\n");		
+		memset(pDiskInfo, 0, sizeof(usDisk_info));
 		return DISK_REINVAILD;
 	}
 
 	if(usUsb_GetMaxLUN(usbdev, &MaxLUNIndex)){		
-		DSKDEBUG("Get LUN Failed\r\n");
+		DSKDEBUG("Get LUN Failed\r\n");		
+		memset(pDiskInfo, 0, sizeof(usDisk_info));
 		return DISK_REINVAILD;
 	}
 	DSKDEBUG(("Total LUNs: %d - Using first LUN in device.\r\n"), (MaxLUNIndex + 1));
+	if(MaxLUNIndex == 0){
+		DSKDEBUG("May Be Hub invoke HDD plug...\r\n");
+		memset(pDiskInfo, 0, sizeof(usDisk_info));
+		return DISK_REINVAILD;
+	}
 
 	SCSI_Sense_Response_t SenseData;
 	if(usUsb_RequestSense(usbdev, 0, &SenseData)){
-		DSKDEBUG("RequestSense Failed\r\n");
+		DSKDEBUG("RequestSense Failed\r\n");		
+		memset(pDiskInfo, 0, sizeof(usDisk_info));
 		return DISK_REINVAILD;
 	}
 
 	SCSI_Inquiry_t InquiryData;
 	if(usUsb_GetInquiryData(usbdev, 0, &InquiryData)){
-		DSKDEBUG("GetInquiryData Failed\r\n");
+		DSKDEBUG("GetInquiryData Failed\r\n");		
+		memset(pDiskInfo, 0, sizeof(usDisk_info));
 		return DISK_REINVAILD;
 	}
 
 	if(usUsb_ReadDeviceCapacity(usbdev, &(pDiskInfo->Blocks), &(pDiskInfo->BlockSize))){
-		DSKDEBUG("ReadDeviceCapacity Failed\r\n");
+		DSKDEBUG("ReadDeviceCapacity Failed\r\n");		
+		memset(pDiskInfo, 0, sizeof(usDisk_info));
 		return DISK_REINVAILD;
 	}
 	pDiskInfo->disk_cap = (int64_t)pDiskInfo->BlockSize *pDiskInfo->Blocks;
@@ -667,9 +675,5 @@ uint8_t usDisk_DiskInquiry(int16_t wlun, struct scsi_inquiry_info *inquiry)
 
 	return DISK_REOK;	
 }
-
-#if defined(NXP_CHIP_18XX)
-#pragma arm section code, rwdata
-#endif 
 
 

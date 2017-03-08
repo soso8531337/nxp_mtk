@@ -6,9 +6,6 @@
  * Copyright(C) Szitman, 2016
  * All rights reserved.
  */
-#if defined(NXP_CHIP_18XX)
-#pragma arm section code ="USB_RAM2", rwdata="USB_RAM2"
-#endif
 #include <stdint.h>
 #include "usUsb.h"
 #include "usSys.h"
@@ -18,6 +15,7 @@
 #if defined(NXP_CHIP_18XX)
 #include "board.h"
 #include "USB.h"
+#include "flash_map.h"
 #include <ctype.h>
 #include <stdio.h>
 #elif defined(LINUX)
@@ -38,60 +36,6 @@
 #else
 #define FRIMDEBUG(...)
 #endif
-
-
-#if defined(NXP_CHIP_18XX)
-int usStorage_firmwareINFO(struct scsi_head *header)
-{
-	vs_acessory_parameter dinfo;	
-	int flen = sizeof(vs_acessory_parameter);
-	uint8_t *buffer = NULL, rc = 0;
-	uint32_t size = 0, total = 0;
-
-	if(usProtocol_GetAvaiableBuffer((void **)&buffer, &size)){
-		FRIMDEBUG("usProtocol_GetAvaiableBuffer Failed\r\n");
-		return 1;
-	}	
-	FRIMDEBUG("AvaiableBuffer 0x%p[%dBytes]\r\n", buffer, size);
-	
-	total = sizeof(struct scsi_head);
-	memcpy(buffer, header, total);
-	memset(&dinfo, 0, sizeof(vs_acessory_parameter));
-	strcpy(dinfo.fw_version, "1.0");
-	strcpy(dinfo.hw_version, "1.0");
-	strcpy(dinfo.manufacture, "szitman");
-	strcpy(dinfo.model_name, "nxp");
-	strcpy(dinfo.sn, "1234567890");
-	strcpy(dinfo.cardid, "1234567");
-	strcpy(dinfo.license, "1234567890");
-	memcpy(buffer+total, &dinfo, flen);
-	total += flen;
-	
-	if((rc = usProtocol_SendPackage(buffer, total)) != 0){
-		FRIMDEBUG("usProtocol_SendPackage Failed\r\n");
-		return rc;
-	}
-	FRIMDEBUG("usStorage_firmwareINFO Successful Firmware Info:\r\nVendor:%s\r\nProduct:%s\r\nVersion:%s\r\nSerical:%s\r\nLicense:%s\r\n", 
-					dinfo.manufacture, dinfo.model_name, dinfo.fw_version, dinfo.sn, dinfo.license);
-	
-	return 0;
-}
-
-int usStorage_firmwareUP(uint8_t *buffer, uint32_t recvSize)
-{
-	FRIMDEBUG("NXP Not Support Firmware Update\r\n");
-	return 0;
-}
-
-#elif defined(LINUX)
-
-#define FILENAME "/dev/mtdblock2"
-#define LICENSE_OFFSET 0xf000
-#define SYS_FIRMCONF		"/etc/firmware"
-#define USTORAGE_UPPATH			"/tmp/u-storage.firmware"
-#define MD5_FLAG			"MD5="
-#define SYS_FIRM_SKIP		(64*1024) //skip 64KB
-#define SYS_FIRM_UPSCRIP		"/sbin/sysupgrade"
 
 typedef struct
 {
@@ -302,6 +246,245 @@ static void MD5Final(MD5_CTX *context,unsigned char digest[16])
 	MD5Encode(digest,context->state,16);
 }
 
+
+#if defined(NXP_CHIP_18XX)
+
+static int wirteToFlash(uint8_t *payload, uint32_t paySize, int flag)
+{
+	uint32_t writeSize, curSize = 0;
+	int tflag = 0;
+
+#define WRITE_FLASH_SIZE		(16*1024)
+	if(!payload){
+		return -1;
+	}
+	while(curSize < paySize){
+		if(paySize-curSize > WRITE_FLASH_SIZE){
+			writeSize = WRITE_FLASH_SIZE;			
+			tflag = 0;
+		}else{
+			tflag = flag;
+			writeSize = paySize-curSize;
+		}
+		if(fw_upgrade(payload+curSize, writeSize, tflag) < 0){
+			FRIMDEBUG("Flash Write Error[%d/%d]\r\n", curSize, paySize);
+			return -1;
+		}
+		curSize += writeSize;
+		FRIMDEBUG("Flash Write Successful[%d/%d]\r\n", curSize, paySize);
+	}
+
+	return 0;
+}
+
+static int upgradeFirmware(char *firmware)
+{
+	struct firmwareHeader firminfo;
+	char md5str[33] = {0};
+	MD5_CTX c;
+	uint8_t *buffer = NULL;
+	uint32_t size = 0, curPtr = 0, md5size = 0, totalSize = 0;
+	unsigned char decrypt[16] = {0};
+	int i;
+	
+	memset(&firminfo, 0, sizeof(struct firmwareHeader));
+	if(spi_read(FLASH_UPGRADE_IMAGE, (unsigned char*)&firminfo, 
+			sizeof(struct firmwareHeader)) != 0){
+		FRIMDEBUG("Flash Read Error\r\n");
+		return -1;
+	}	
+	FRIMDEBUG("Firmware in MD5: %s!!!!\r\n", firminfo.md5);
+
+	curPtr = sizeof(struct firmwareHeader);
+	memset(&c, 0, sizeof(c));
+	MD5Init(&c);
+	totalSize = firminfo.size+sizeof(struct firmwareHeader);
+	while (curPtr < totalSize){
+		if(usProtocol_GetAvaiableBuffer((void **)&buffer, &size)){
+			FRIMDEBUG("usProtocol_GetAvaiableBuffer Failed\r\n");
+			return -1;
+		}
+		memset(buffer, 0, size);
+		if((totalSize-curPtr) > 16*1024){
+			md5size = 16*1024;
+		}else{
+			md5size = totalSize-curPtr;
+		}
+		FRIMDEBUG("Firmware Read:0x%x buffer=%p  md5size=%d\r\n", 
+					(FLASH_UPGRADE_IMAGE+curPtr), buffer, md5size);
+		if(spi_read(FLASH_UPGRADE_IMAGE+curPtr, buffer, md5size) != 0){
+			FRIMDEBUG("Flash Read Error\r\n");
+			return -1;
+		}
+
+		MD5Update(&c,buffer, md5size);
+		curPtr += md5size;
+	}
+	MD5Final(&c, decrypt);
+
+	for(i=0;i<16;i++){		
+		sprintf(&(md5str[i*2]),"%02x",decrypt[i]);
+	}
+	FRIMDEBUG("Firmware MD5:%s!!!!!!!!!!!!!!!!!!!!!!!!!\r\n", md5str);
+
+	if(strncmp(md5str, firminfo.md5, sizeof(firminfo.md5)) == 0){
+		FRIMDEBUG("Firmware Check MD5 Ok, upgrade successful\r\n");
+		set_flage();
+		return 0;
+	}
+	FRIMDEBUG("Firmware Check MD5 Not Sambe:OK:%s!!! Bad:%s!!!!\r\n", firminfo.md5, md5str);
+
+	return -1;
+}
+
+int usStorage_firmwareINFO(struct scsi_head *header)
+{
+	vs_acessory_parameter dinfo;	
+	int flen = sizeof(vs_acessory_parameter);
+	uint8_t *buffer = NULL, rc = 0;
+	uint32_t size = 0, total = 0;
+	struct firmwareHeader firminfo;
+
+	if(usProtocol_GetAvaiableBuffer((void **)&buffer, &size)){
+		FRIMDEBUG("usProtocol_GetAvaiableBuffer Failed\r\n");
+		return 1;
+	}	
+	FRIMDEBUG("AvaiableBuffer 0x%p[%dBytes]\r\n", buffer, size);
+	
+	total = sizeof(struct scsi_head);
+	memcpy(buffer, header, total);
+	memset(&dinfo, 0, sizeof(vs_acessory_parameter));
+	memset(&firminfo, 0, sizeof(struct firmwareHeader));
+	spi_read(FLASH_UPGRADE_IMAGE, (unsigned char*)&firminfo, sizeof(struct firmwareHeader));
+	strcpy(dinfo.fw_version, firminfo.version);
+	strcpy(dinfo.hw_version, "1.0");
+	strcpy(dinfo.manufacture, firminfo.vendor);
+	strcpy(dinfo.model_name, firminfo.product);
+	strcpy(dinfo.sn, "1234567890");
+	strcpy(dinfo.cardid, "1234567");
+	strcpy(dinfo.license, "1234567890");
+	memcpy(buffer+total, &dinfo, flen);
+	total += flen;
+	
+	if((rc = usProtocol_SendPackage(buffer, total)) != 0){
+		FRIMDEBUG("usProtocol_SendPackage Failed\r\n");
+		return rc;
+	}
+	FRIMDEBUG("usStorage_firmwareINFO Successful Firmware Info:\r\nVendor:%s\r\nProduct:%s\r\nVersion:%s\r\nSerical:%s\r\nLicense:%s\r\n", 
+					dinfo.manufacture, dinfo.model_name, dinfo.fw_version, dinfo.sn, dinfo.license);
+	
+	return 0;
+}
+
+int usStorage_firmwareUP(uint8_t *buffer, uint32_t recvSize)
+{
+	struct scsi_head scsi;	
+	uint8_t headbuf[PRO_HDR] = {0}; 
+	uint32_t hSize = recvSize;
+
+	if(recvSize < PRO_HDR){
+		FRIMDEBUG("Frimware Request Error\r\n");
+		return -1;
+	}
+	/*We must save the header in var*/
+	memcpy(&scsi, buffer, PRO_HDR);
+	if(scsi.ctrid == SCSI_UPDATE_START){
+		FRIMDEBUG("Prepare To update Firmware\r\n");		
+	}else if(scsi.ctrid == SCSI_UPDATE_DATA){
+		uint8_t *payload = buffer+SCSI_HEAD_SIZE;
+		uint32_t paySize, curSize = 0, firmSize = 0;
+		int32_t flag = 0;		
+		struct firmwareHeader *firminfo = NULL;		
+	
+		paySize= recvSize-PRO_HDR;
+		if(paySize){
+			FRIMDEBUG("Write %uBytes to Firmware\r\n", paySize);
+			firminfo = (struct firmwareHeader *)payload;
+			firmSize = firminfo->size+sizeof(struct firmwareHeader);
+			FRIMDEBUG("Firmware Size %d\r\n", firmSize);
+			if(paySize == firmSize &&paySize == scsi.len){
+				flag = 1;
+			}
+			if(wirteToFlash(payload, paySize, flag) < 0){				
+				scsi.relag = 1;
+				goto sndRes;
+			}
+			
+			curSize += paySize;
+		}
+		while(curSize < scsi.len){
+			uint8_t *pbuffer = NULL;
+			if(usProtocol_RecvPackage((void **)&pbuffer, hSize, &paySize)){
+				FRIMDEBUG("usProtocol_RecvPackage Failed IN Firmware\r\n");
+				/*Write to Phone*/
+				scsi.relag = 1;
+				goto sndRes;
+			}
+			hSize+= paySize;
+			if(firminfo == NULL){
+				firminfo = (struct firmwareHeader *)pbuffer;				
+				firmSize = firminfo->size+sizeof(struct firmwareHeader);			
+				FRIMDEBUG("Second Receive Firmware Size %d\r\n", firmSize);
+			}
+			if(curSize+paySize == scsi.len){
+				FRIMDEBUG("Last Part Firmware [PartT:%uBytes/%dBytes]\r\n", paySize, scsi.len);
+				flag = 1;
+			}else{
+				flag = 0;
+			}
+			
+			if(wirteToFlash(pbuffer, paySize, flag)){
+				FRIMDEBUG("fw_upgrade wirte flash failed\r\n");				
+				scsi.relag = 1;
+				goto sndRes;
+			}
+
+			FRIMDEBUG("Write Firmware: %uBytes [PartT:%uBytes/%dBytes]\r\n", 
+								paySize, curSize, scsi.len);			
+			curSize += paySize;
+		}
+		
+		if(scsi.len < firmSize){
+			FRIMDEBUG("Firmware Send Multi Time Not Support:%d/%d\r\n", scsi.len, firmSize);
+			scsi.relag = 1;
+			goto sndRes;
+		}
+
+		FRIMDEBUG("Write Firmware %d Successful:%d\r\n", 
+						firmSize, curSize);
+	}else if(scsi.ctrid == SCSI_UPDATE_END){
+		FRIMDEBUG("Check Firmware MD5!!\r\n");
+		if(upgradeFirmware(NULL) < 0){
+			FRIMDEBUG("upgradeFirmware  Error\r\n"); 		
+			scsi.relag = 1;
+		}
+	}else{
+		FRIMDEBUG("unknown Comannd ID:%d\r\n", scsi.ctrid);
+		scsi.relag = 1;
+	}
+
+sndRes:
+
+	memcpy(headbuf, &scsi, PRO_HDR);
+	/*Send To Phone*/
+	if(usProtocol_SendPackage(headbuf, PRO_HDR)){
+		FRIMDEBUG("Send To Phone[Just Header Error]\r\n");
+		return 1;
+	}
+
+	return 0;
+}
+
+#elif defined(LINUX)
+
+#define FILENAME "/dev/mtdblock2"
+#define LICENSE_OFFSET 0xf000
+#define SYS_FIRMCONF		"/etc/firmware"
+#define USTORAGE_UPPATH			"/tmp/u-storage.firmware"
+#define MD5_FLAG			"MD5="
+#define SYS_FIRM_SKIP		(64*1024) //skip 64KB
+#define SYS_FIRM_UPSCRIP		"/sbin/sysupgrade"
+
 /*********************************************************/
 								/* CRC*/
 /*********************************************************/
@@ -359,6 +542,7 @@ static const uint32_t crc32_table[256] = {
 	0x5d681b02L, 0x2a6f2b94L, 0xb40bbe37L, 0xc30c8ea1L, 0x5a05df1bL,
 	0x2d02ef8dL
 };
+
 static inline uint32_t 
 crc32(uint32_t val, const void *ss, int len)
 {
@@ -367,6 +551,7 @@ crc32(uint32_t val, const void *ss, int len)
                 val = crc32_table[(val ^ *s++) & 0xff] ^ (val >> 8);
         return val;
 }
+
 
 static int compute_md5(char *filename, off_t offset, char *md5buf)
 {
@@ -683,9 +868,5 @@ sndRes:
 
 
 #endif
-
-#if defined(NXP_CHIP_18XX)
-#pragma arm section code, rwdata
-#endif 
 
 

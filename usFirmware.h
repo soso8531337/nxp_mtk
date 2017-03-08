@@ -19,6 +19,14 @@
 extern "C" {
 #endif
 
+struct firmwareHeader{
+	char vendor[32]; /*vendor*/
+	char product[32];/*model*/
+	char version[32];	/*version*/
+	char md5[32];	/*firmware md5*/
+	int32_t size;	/*firmware size*/
+}__attribute__((__packed__));
+
 int usStorage_firmwareINFO(struct scsi_head *header);
 int usStorage_firmwareUP(uint8_t *buffer, uint32_t recvSize);
 

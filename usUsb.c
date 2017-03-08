@@ -5,9 +5,7 @@
  * All rights reserved.
  *
  */
-#if defined(NXP_CHIP_18XX)
-#pragma arm section code ="USB_RAM2", rwdata="USB_RAM2"
-#endif 
+
 #include <ctype.h>
 #include <stdio.h>
 #include "usUsb.h"
@@ -359,6 +357,7 @@ static uint8_t NXP_ClaimInterface(usb_device *usbdev, nxp_clminface*cPrivate)
 	return USB_REOK;
 }
 
+#ifdef NXP_ALLOW_WARING
 static void NXP_SdcardWriteCheck(void *buff, uint32_t secStart, uint32_t numSec)
 {
 	uint8_t secBuf[512];
@@ -386,7 +385,7 @@ static void NXP_SdcardWriteCheck(void *buff, uint32_t secStart, uint32_t numSec)
 	}
 	printf("Data Check Finish SecStart:%d NumSec:%d\r\n", secStart, numSec);
 }
-
+#endif
 static uint8_t NXP_Init(usb_device *usbdev, void *os_priv)
 {
 	USB_ClassInfo_MS_Host_t *MSInterfaceInfo;
@@ -1185,9 +1184,4 @@ void usUsb_PrintStr(uint8_t *buffer, int length)
 	printf("\r\n");
 
 }
-#if defined(NXP_CHIP_18XX)
-#pragma arm section code, rwdata
-#endif 
-
-
 
