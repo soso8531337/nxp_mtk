@@ -31,6 +31,8 @@
  */
 
 #include "board.h"
+#include "FreeRTOS.h"
+#include "task.h"
 #include "i2c.h"
 
 /*****************************************************************************
@@ -49,32 +51,25 @@ static I2CM_XFER_T  i2cmXferRec;
  * Private functions
  ****************************************************************************/
 
-/* Set I2C mode to polling/interrupt */
-static void i2c_set_mode(I2C_ID_T id, int polling)
+static void i2c_delay(uint32_t time)
 {
-	if (!polling) {
-		Chip_I2C_SetMasterEventHandler(id, Chip_I2C_EventHandler);
+	/* In an RTOS, the thread would sleep allowing other threads to run.
+	   For standalone operation, we just spin on RI timer */
+	int32_t curr = (int32_t) Chip_RIT_GetCounter(LPC_RITIMER);
+	int32_t final = curr + ((SystemCoreClock / 1000) * time);
 
-		/* Test for I2C0 interface */
-		if (id == I2C0) {
-			NVIC_EnableIRQ(I2C0_IRQn);
-		}
-		else {
-			NVIC_EnableIRQ(I2C1_IRQn);
-		}
+	if (final == curr) return;
+
+	if ((final < 0) && (curr > 0)) {
+		while (Chip_RIT_GetCounter(LPC_RITIMER) < (uint32_t) final) {}
 	}
 	else {
-		/* Test for I2C0 interface */
-		if (id == I2C0) {
-			NVIC_DisableIRQ(I2C0_IRQn);
-		}
-		else {
-			NVIC_DisableIRQ(I2C1_IRQn);
-		}
-
-		Chip_I2C_SetMasterEventHandler(id, Chip_I2C_EventHandlerPolling);
+		while ((int32_t) Chip_RIT_GetCounter(LPC_RITIMER) < final) {}
 	}
+
+	return;
 }
+
 
 /* Initialize the I2C bus */
 static void i2c_app_init(I2C_ID_T id, int speed)
@@ -85,18 +80,6 @@ static void i2c_app_init(I2C_ID_T id, int speed)
 	Chip_I2C_Init(id);
 	Chip_I2C_SetClockRate(id, speed);
 
-	/* Set default mode to interrupt */
-	i2c_set_mode(id, 0);
-}
-
-/* Function to wait for I2CM transfer completion */
-static void WaitForI2cXferComplete(I2CM_XFER_T *xferRecPtr)
-{
-	/* Test for still transferring data */
-	while (xferRecPtr->status == I2CM_STATUS_BUSY) {
-		/* Sleep until next interrupt */
-		__WFI();
-	}
 }
 
 /* Function to setup and execute I2C transfer request */
@@ -117,28 +100,15 @@ static void SetupXferRecAndExecute(uint8_t devAddr,
 	Chip_I2CM_Xfer(LPC_I2C0, &i2cmXferRec);
 
 	/* Wait for transfer completion */
-	WaitForI2cXferComplete(&i2cmXferRec);
-}
-
-/*****************************************************************************
- * Public functions
- ****************************************************************************/
-
-/**
- * @brief	Handle I2C0 interrupt by calling I2CM interrupt transfer handler
- * @return	Nothing
- */
-void I2C0_IRQHandler(void)
-{
-	/* Call I2CM ISR function with the I2C device and transfer rec */
-	Chip_I2CM_XferHandler(LPC_I2C0, &i2cmXferRec);
+//	WaitForI2cXferComplete(&i2cmXferRec);
+	Chip_I2CM_XferBlocking(LPC_I2C0, &i2cmXferRec);
 }
 
 /**
  * @brief	Main program body
  * @return	int
  */
-int i2c_main(void)
+int vs_i2c_init(void)
 {
 
 	i2c_app_init(I2C0, SPEED_100KHZ);
@@ -148,9 +118,9 @@ int i2c_main(void)
 	return 0;
 }
 
-void vs_i2c_write(unsigned char value)
+void vs_i2c_write(unsigned char cmd)
 {
-	SetupXferRecAndExecute(I2C_ADDR_7BIT, &value, 1, NULL, 0);
+	SetupXferRecAndExecute(I2C_ADDR_7BIT, &cmd, 1, NULL, 0);
 //	WriteBoard_I2CM(value);
 }
 void vs_i2c_read(uint8_t *value)
@@ -166,4 +136,53 @@ uint8_t vs_sendcmd_get_value(uint8_t cmd)
 	/* Write audio power value */
 	SetupXferRecAndExecute(I2C_ADDR_7BIT, &cmd, 1, &value, 1);
 	return value;
+}
+
+void loop_send_only_cmd(char cmd)
+{
+        int i;
+			unsigned char tmp;
+
+        for(i=0; i < I2C_RETRY_COUNT; i++)
+        {
+						tmp = vs_sendcmd_get_value(cmd);
+						if(tmp == I2C_BUS_TEST_RETURN)
+							break;
+            i2c_delay(50);
+        }
+}
+
+
+int i2c_ioctl(int cmd, unsigned char *value)
+{
+	int ret = 0;
+	
+	switch(cmd){
+		case IOCTL_GET_STATUS_I2C:
+			if(value == NULL)
+				return -1;
+			*value = vs_sendcmd_get_value(I2C_STATUS_CMD);
+			break;
+			
+		case IOCTL_GET_BATTERY_I2C:
+			if(value == NULL)
+				return -1;
+			*value = vs_sendcmd_get_value(I2C_BATTERY_CMD);
+			break;
+			
+		case IOCTL_POWER_RESET_I2C:
+			loop_send_only_cmd(I2C_POWER_RESET_CMD);
+			break;
+		
+		case IOCTL_BUS_TEST_I2C:
+			loop_send_only_cmd(I2C_BUS_TEST_CMD);
+			break;
+		
+		default:
+			printf("have not this cmd\r\n");
+			ret = -1;
+			break;
+	}
+	return ret;
+		
 }
