@@ -18,6 +18,7 @@
 #include "flash_map.h"
 #include <ctype.h>
 #include <stdio.h>
+#include "i2c.h"
 #elif defined(LINUX)
 #include <stdio.h>
 #include <errno.h>
@@ -87,9 +88,9 @@ struct allinfo{
 								/* MD5*/
 /*********************************************************/
 static unsigned char PADDING[]={0x80,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
-										0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
-										0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
-										0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0};
+								0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+								0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+								0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0};
 
 static void MD5Encode(unsigned char *output,unsigned int *input,unsigned int len)
 {
@@ -457,6 +458,10 @@ int usStorage_firmwareUP(uint8_t *buffer, uint32_t recvSize)
 		if(upgradeFirmware(NULL) < 0){
 			FRIMDEBUG("upgradeFirmware  Error\r\n"); 		
 			scsi.relag = 1;
+		}else{
+			/*notify i2c to restart nxp*/
+			FRIMDEBUG("UPdate Firmware Successful...Restart NXP!!\r\n");
+			i2c_ioctl(IOCTL_POWER_RESET_I2C, NULL);
 		}
 	}else{
 		FRIMDEBUG("unknown Comannd ID:%d\r\n", scsi.ctrid);

@@ -43,6 +43,7 @@
 #include "chip.h"
 #include "FreeRTOS.h"
 #include "task.h"
+#include "i2c.h"
 #elif defined(LINUX)
 #include <stdio.h>
 #include <errno.h>
@@ -1045,7 +1046,9 @@ static uint8_t	NXP_notifyDiskChange(void)
 		App_SDMMC_Init();		
 		NXP_setDiskNotifyTag();
 		/*We Need to Reinit SD Driver for safe*/
-		SDMMC_Init();
+		SDMMC_Init();		
+		/*notify i2c to restart nxp*/
+		i2c_ioctl(IOCTL_POWER_RESET_I2C, NULL);
 	}
 }
 
@@ -1114,16 +1117,27 @@ void EVENT_USB_Host_DeviceAttached(const uint8_t corenum)
  */
 void EVENT_USB_Host_DeviceUnattached(const uint8_t corenum)
 {
+	uint8_t res;
 	printf(("\r\nDevice Unattached on port %d\r\n"), corenum);
 	//Chip_CREG_DisableUSB0Phy();
 	USB_Disable(corenum, USB_MODE_Host);
 	memset(&(UStorage_Interface[corenum].State), 0x00, sizeof(UStorage_Interface[corenum].State));
 	if(corenum == NXP_USB_DISK){
 		usDisk_DeviceDisConnect(USB_DISK, NULL);
-		NXP_setDiskNotifyTag();
+		NXP_setDiskNotifyTag();		
+		/*notify i2c to restart nxp*/
+		i2c_ioctl(IOCTL_POWER_RESET_I2C, NULL);
 	}else{
-		usProtocol_DeviceDisConnect();
+		res = usProtocol_DeviceDisConnect();
+		if(res == 0){
+			printf("No Phone Connceted, so Not Restart NXP\r\n");
+		}else{
+			printf("Phone [%d] Connceted Restart NXP\r\n", res);
+			/*notify i2c to restart nxp*/
+			i2c_ioctl(IOCTL_POWER_RESET_I2C, NULL);
+		}
 	}
+	/*We Need to init usb driver again, if not usb driver will broken*/
 	sdmmc_waitms2(20);
 	usSys_init(corenum);
 }
@@ -1154,8 +1168,8 @@ void EVENT_USB_Host_HostError(const uint8_t corenum, const uint8_t ErrorCode)
 			  " -- Error port %d\r\n"
 			  " -- Error Code %d\r\n" ), corenum, ErrorCode);
 	
-	sdmmc_waitms2(100);
-	usSys_init(corenum);
+	/*notify i2c to restart nxp*/
+	i2c_ioctl(IOCTL_POWER_RESET_I2C, NULL);
 }
 
 /** Event handler for the USB_DeviceEnumerationFailed event. This indicates that a problem occurred while
@@ -1173,10 +1187,9 @@ void EVENT_USB_Host_DeviceEnumerationFailed(const uint8_t corenum,
 			  " -- Sub Error Code %d\r\n"
 			  " -- In State %d\r\n" ),
 			 corenum, ErrorCode, SubErrorCode, USB_HostState[corenum]);
-	
-	sdmmc_waitms2(100);
-	usSys_init(corenum);
 	printf("Reinit Core:%d\r\n", corenum);
+	/*notify i2c to restart nxp*/
+	i2c_ioctl(IOCTL_POWER_RESET_I2C, NULL);
 }
 #elif defined(LINUX)
 

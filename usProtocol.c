@@ -1556,8 +1556,10 @@ uint8_t usProtocol_DeviceDetect(void *os_priv)
 
 uint8_t usProtocol_DeviceDisConnect(void)
 {
+	uint8_t typePhone = uSinfo.usType;
+		
 	memset(&uSinfo, 0, sizeof(uSinfo));
-	return PROTOCOL_REOK;
+	return typePhone;
 }
 
 #elif defined(LINUX)
