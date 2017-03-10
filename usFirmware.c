@@ -345,6 +345,10 @@ int usStorage_firmwareINFO(struct scsi_head *header)
 	uint8_t *buffer = NULL, rc = 0;
 	uint32_t size = 0, total = 0;
 	struct firmwareHeader firminfo;
+	typedef struct __image_info{
+		unsigned char flag;
+		unsigned int offset;
+	}image_info;
 
 	if(usProtocol_GetAvaiableBuffer((void **)&buffer, &size)){
 		FRIMDEBUG("usProtocol_GetAvaiableBuffer Failed\r\n");
@@ -354,9 +358,23 @@ int usStorage_firmwareINFO(struct scsi_head *header)
 	
 	total = sizeof(struct scsi_head);
 	memcpy(buffer, header, total);
+
+	
+	image_info image;
+	memset(&image, 0, sizeof(image_info));
+	if(spi_read(FLASH_SYS_DATA, (unsigned char*)&image, sizeof(image_info))){
+		printf("Read FLASH_SYS_DATA Error\r\n");
+		header->relag = 1;
+		return usProtocol_SendPackage(buffer, total);
+	}
 	memset(&dinfo, 0, sizeof(vs_acessory_parameter));
 	memset(&firminfo, 0, sizeof(struct firmwareHeader));
-	spi_read(FLASH_UPGRADE_IMAGE, (unsigned char*)&firminfo, sizeof(struct firmwareHeader));
+	if(image.flag == 1){
+		spi_read(FLASH_UPGRADE_IMAGE, (unsigned char*)&firminfo, sizeof(struct firmwareHeader));
+	}else{
+		spi_read(FLASH_DEF_IMAGE, (unsigned char*)&firminfo, sizeof(struct firmwareHeader));
+	}
+	
 	strcpy(dinfo.fw_version, firminfo.version);
 	strcpy(dinfo.hw_version, "1.0");
 	strcpy(dinfo.manufacture, firminfo.vendor);
@@ -371,7 +389,7 @@ int usStorage_firmwareINFO(struct scsi_head *header)
 		FRIMDEBUG("usProtocol_SendPackage Failed\r\n");
 		return rc;
 	}
-	FRIMDEBUG("usStorage_firmwareINFO Successful Firmware Info:\r\nVendor:%s\r\nProduct:%s\r\nVersion:%s\r\nSerical:%s\r\nLicense:%s\r\n", 
+	printf("usStorage_firmwareINFO Successful Firmware Info:\r\nVendor:%s\r\nProduct:%s\r\nVersion:%s\r\nSerical:%s\r\nLicense:%s\r\n", 
 					dinfo.manufacture, dinfo.model_name, dinfo.fw_version, dinfo.sn, dinfo.license);
 	
 	return 0;

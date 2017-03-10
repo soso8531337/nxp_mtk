@@ -676,6 +676,28 @@ uint8_t NXP_ReadDeviceCapacity(usb_device *usbdev, uint32_t *Blocks, uint32_t *B
 	return USB_REOK;
 }
 
+uint8_t NXP_DiskStartStop(usb_device *usbdev,
+						uint8_t index, uint8_t state)
+{
+#if 0
+	USB_ClassInfo_MS_Host_t *MSInterfaceInfo;
+
+	if(!usbdev){
+		return USB_REPARA;
+	}
+
+	MSInterfaceInfo = (USB_ClassInfo_MS_Host_t *)(usbdev->os_priv);
+	if(MS_Host_StartStopDisk(MSInterfaceInfo, index, state)){
+		printf("%s Lun %d Error..\r\n", 
+				((state == 1)?"Start":"Stop"), index);		
+		return USB_REGEN;
+	}
+#endif
+	printf("%s Lun %d Successful..\r\n", 
+			((state == 1)?"Start":"Stop"), index);
+	return USB_REOK;
+}
+
 #elif defined(LINUX)
 static uint8_t LINUX_SendControlRequest(void* dev_handle, 
 			uint8_t bmRequestType, uint8_t bRequest, 
@@ -1156,6 +1178,20 @@ uint8_t usUsb_DiskWriteSectors(usb_device *usbdev,
 #endif
 }
 
+/*
+* state = 1: start disk
+* state = 0: stop disk
+*/
+uint8_t usUsb_DiskStartStop(usb_device *usbdev,
+						uint8_t index, uint8_t state)
+{
+#if defined(NXP_CHIP_18XX)
+		return NXP_DiskStartStop(usbdev, index, state);
+#elif defined(LINUX)
+		return USB_REOK;
+#endif
+}
+
 void usUsb_Print(uint8_t *buffer, int length)
 {
 	int cur = 0;
@@ -1189,4 +1225,5 @@ void usUsb_PrintStr(uint8_t *buffer, int length)
 	printf("\r\n");
 
 }
+
 

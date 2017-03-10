@@ -147,14 +147,14 @@ static uint8_t usDisk_DeviceDetectHDD(uint8_t type, void *os_priv)
 	printf(("Total LUNs: %d - Using first LUN in device.\r\n"), (MaxLUNIndex + 1));
 
 	SCSI_Sense_Response_t SenseData;
-	if(usUsb_RequestSense(usbdev, 0, &SenseData)){
+	if(usUsb_RequestSense(usbdev, MaxLUNIndex, &SenseData)){
 		DSKDEBUG("RequestSense Failed\r\n");		
 		memset(pDiskInfo, 0, sizeof(usDisk_info));
 		return DISK_REINVAILD;
 	}
 
 	SCSI_Inquiry_t InquiryData;
-	if(usUsb_GetInquiryData(usbdev, 0, &InquiryData)){
+	if(usUsb_GetInquiryData(usbdev, MaxLUNIndex, &InquiryData)){
 		printf("GetInquiryData Failed\r\n");		
 		memset(pDiskInfo, 0, sizeof(usDisk_info));
 		return DISK_REINVAILD;
@@ -225,6 +225,16 @@ uint8_t usDisk_cacheSYNC(int16_t wlun)
 {
 	return DISK_REOK;
 }
+
+uint8_t usDisk_DiskStartStop(uint8_t state)
+{
+	if(uDinfo[STOR_HDD].disknum){
+		DSKDEBUG("%s Disk\r\n", (state == 1)?"Start":"Stop");
+		return usUsb_DiskStartStop(&(uDinfo[STOR_HDD].diskdev), 0, state);
+	}
+	return DISK_REOK;
+}
+
 #elif defined(LINUX)
 
 #ifndef BLKROSET
@@ -555,6 +565,10 @@ uint8_t usDisk_cacheSYNC(int16_t wlun)
 	return DISK_REOK;
 }
 
+uint8_t usDisk_DiskStartStop(uint8_t state)
+{
+	return DISK_REOK;
+}
 #endif
 static usDisk_info * usDisk_FindLocation(uint8_t type)
 {
@@ -670,5 +684,3 @@ uint8_t usDisk_DiskInquiry(int16_t wlun, struct scsi_inquiry_info *inquiry)
 
 	return DISK_REOK;	
 }
-
-

@@ -1049,7 +1049,8 @@ static uint8_t	NXP_notifyDiskChange(void)
 		NXP_setDiskNotifyTag();
 		/*We Need to Reinit SD Driver for safe*/
 		SDMMC_Init();		
-		/*notify i2c to restart nxp*/
+		/*notify i2c to restart nxp*/		
+		usDisk_DiskStartStop(0);
 		i2c_ioctl(IOCTL_POWER_RESET_I2C, NULL);
 	}
 }
@@ -1134,8 +1135,9 @@ void EVENT_USB_Host_DeviceUnattached(const uint8_t corenum)
 		if(res == 0){
 			printf("No Phone Connceted, so Not Restart NXP\r\n");
 		}else{
-			printf("Phone [%d] Connceted Restart NXP\r\n", res);
+			printf("Phone [%d] Connceted Restart NXP[Try Stop Disk]\r\n", res);
 			/*notify i2c to restart nxp*/
+			usDisk_DiskStartStop(0);
 			i2c_ioctl(IOCTL_POWER_RESET_I2C, NULL);
 		}
 	}
@@ -1170,7 +1172,8 @@ void EVENT_USB_Host_HostError(const uint8_t corenum, const uint8_t ErrorCode)
 			  " -- Error port %d\r\n"
 			  " -- Error Code %d\r\n" ), corenum, ErrorCode);
 	
-	/*notify i2c to restart nxp*/
+	/*notify i2c to restart nxp*/	
+	usDisk_DiskStartStop(0);
 	i2c_ioctl(IOCTL_POWER_RESET_I2C, NULL);
 }
 
@@ -1190,7 +1193,8 @@ void EVENT_USB_Host_DeviceEnumerationFailed(const uint8_t corenum,
 			  " -- In State %d\r\n" ),
 			 corenum, ErrorCode, SubErrorCode, USB_HostState[corenum]);
 	printf("Reinit Core:%d\r\n", corenum);
-	/*notify i2c to restart nxp*/
+	/*notify i2c to restart nxp*/	
+	usDisk_DiskStartStop(0);
 	i2c_ioctl(IOCTL_POWER_RESET_I2C, NULL);
 }
 #elif defined(LINUX)

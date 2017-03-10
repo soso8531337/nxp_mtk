@@ -239,6 +239,8 @@ uint8_t usUsb_GetInquiryData(usb_device *usbdev,
 						uint8_t index, SCSI_Inquiry_t *InquiryData);
 uint8_t usUsb_ReadDeviceCapacity(usb_device *usbdev, uint32_t *Blocks, uint32_t *BlockSize);
 
+uint8_t usUsb_DiskStartStop(usb_device *usbdev,
+						uint8_t index, uint8_t state);
 #ifdef __cplusplus
 }
 #endif
