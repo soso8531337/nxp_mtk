@@ -642,13 +642,14 @@ uint8_t NXP_ReadDeviceCapacity(usb_device *usbdev, uint32_t *Blocks, uint32_t *B
 {
 	SCSI_Capacity_t DiskCapacity;
 	USB_ClassInfo_MS_Host_t *MSInterfaceInfo;
+	uint8_t loopCount = 0;
 	/*os_priv is USB_ClassInfo_MS_Host_t *MSInterfaceInfo*/
 	if(!usbdev || !Blocks|| !BlockSize){
 		return USB_REPARA;
 	}
 	
 	MSInterfaceInfo = (USB_ClassInfo_MS_Host_t *)(usbdev->os_priv);
-	for (;; ) {
+	for (loopCount=0; loopCount< 0x80; loopCount++) {
 		uint8_t ErrorCode = MS_Host_TestUnitReady(MSInterfaceInfo, 0);
 		if (!(ErrorCode)) {
 			break;
@@ -659,6 +660,10 @@ uint8_t NXP_ReadDeviceCapacity(usb_device *usbdev, uint32_t *Blocks, uint32_t *B
 			USB_Host_SetDeviceConfiguration(usbdev->device_address, 0);
 			return USB_REGEN;
 		}
+	}
+	if(loopCount == 0x80){
+		USBDEBUG("MS_Host_TestUnitReady Not Ready, May Be no HDD or HDD Bad\r\n");
+		return USB_REGEN;
 	}
 	if (MS_Host_ReadDeviceCapacity(MSInterfaceInfo, 0, &DiskCapacity)) {
 		USBDEBUG("Error retrieving device capacity.\r\n");

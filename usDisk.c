@@ -68,8 +68,8 @@ enum{
 };
 
 enum{	
-	STOR_CARD=0,
-	STOR_HDD=1,
+	STOR_CARD=1,
+	STOR_HDD=0,
 	STOR_MAX=2,
 };
 typedef struct {
@@ -140,16 +140,11 @@ static uint8_t usDisk_DeviceDetectHDD(uint8_t type, void *os_priv)
 	}
 
 	if(usUsb_GetMaxLUN(usbdev, &MaxLUNIndex)){		
-		DSKDEBUG("Get LUN Failed\r\n");		
+		printf("Get LUN Failed\r\n");		
 		memset(pDiskInfo, 0, sizeof(usDisk_info));
 		return DISK_REINVAILD;
 	}
-	DSKDEBUG(("Total LUNs: %d - Using first LUN in device.\r\n"), (MaxLUNIndex + 1));
-	if(MaxLUNIndex == 0){
-		DSKDEBUG("May Be Hub invoke HDD plug...\r\n");
-		memset(pDiskInfo, 0, sizeof(usDisk_info));
-		return DISK_REINVAILD;
-	}
+	printf(("Total LUNs: %d - Using first LUN in device.\r\n"), (MaxLUNIndex + 1));
 
 	SCSI_Sense_Response_t SenseData;
 	if(usUsb_RequestSense(usbdev, 0, &SenseData)){
@@ -160,7 +155,7 @@ static uint8_t usDisk_DeviceDetectHDD(uint8_t type, void *os_priv)
 
 	SCSI_Inquiry_t InquiryData;
 	if(usUsb_GetInquiryData(usbdev, 0, &InquiryData)){
-		DSKDEBUG("GetInquiryData Failed\r\n");		
+		printf("GetInquiryData Failed\r\n");		
 		memset(pDiskInfo, 0, sizeof(usDisk_info));
 		return DISK_REINVAILD;
 	}
@@ -171,7 +166,7 @@ static uint8_t usDisk_DeviceDetectHDD(uint8_t type, void *os_priv)
 		return DISK_REINVAILD;
 	}
 	pDiskInfo->disk_cap = (int64_t)pDiskInfo->BlockSize *pDiskInfo->Blocks;
-	DSKDEBUG("Mass Storage Device Enumerated. [Num:%d Blocks:%d BlockSzie:%d Cap:%lld]\r\n",
+	printf("Mass Storage Device Enumerated. [Num:%d Blocks:%d BlockSzie:%d Cap:%lld]\r\n",
 			pDiskInfo->disknum, pDiskInfo->Blocks, pDiskInfo->BlockSize, pDiskInfo->disk_cap);
 	return DISK_REOK;
 }

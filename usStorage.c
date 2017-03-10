@@ -926,6 +926,8 @@ static int usStorage_Handle(void)
 			SDEBUGOUT("Unhandle Command\r\nheader:%x\r\nwtag:%d\r\n"
 						"ctrid:%d\r\naddr:%u\r\nlen:%d\r\nwlun:%d\r\n", header.head,
 						header.wtag, header.ctrid, header.addr, header.len, header.wlun);
+			header.relag = 1;
+			usStorage_sendHEAD(&header);
 	}
 
 	return 0;
