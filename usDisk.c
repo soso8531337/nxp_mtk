@@ -146,13 +146,14 @@ static uint8_t usDisk_DeviceDetectHDD(uint8_t type, void *os_priv)
 	}
 	printf(("Total LUNs: %d - Using first LUN in device.\r\n"), (MaxLUNIndex + 1));
 
-	SCSI_Sense_Response_t SenseData;
+	SCSI_Sense_Response_t SenseData;	
+	printf("Get RequestSense\r\n");		
 	if(usUsb_RequestSense(usbdev, MaxLUNIndex, &SenseData)){
 		DSKDEBUG("RequestSense Failed\r\n");		
 		memset(pDiskInfo, 0, sizeof(usDisk_info));
 		return DISK_REINVAILD;
 	}
-
+	printf("Get InquiryData\r\n");
 	SCSI_Inquiry_t InquiryData;
 	if(usUsb_GetInquiryData(usbdev, MaxLUNIndex, &InquiryData)){
 		printf("GetInquiryData Failed\r\n");		

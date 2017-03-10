@@ -1048,10 +1048,12 @@ static uint8_t	NXP_notifyDiskChange(void)
 		App_SDMMC_Init();		
 		NXP_setDiskNotifyTag();
 		/*We Need to Reinit SD Driver for safe*/
-		SDMMC_Init();		
+		SDMMC_Init();
+	#if 0	/*if we start it , phone will not detect*/	
 		/*notify i2c to restart nxp*/		
 		usDisk_DiskStartStop(0);
 		i2c_ioctl(IOCTL_POWER_RESET_I2C, NULL);
+	#endif	
 	}
 }
 
