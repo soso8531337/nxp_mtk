@@ -140,16 +140,14 @@ uint8_t vs_sendcmd_get_value(uint8_t cmd)
 
 void loop_send_only_cmd(char cmd)
 {
-        int i;
-			unsigned char tmp;
+		int i;
 
-        for(i=0; i < I2C_RETRY_COUNT; i++)
-        {
-						tmp = vs_sendcmd_get_value(cmd);
-						if(tmp == I2C_BUS_TEST_RETURN)
-							break;
-            i2c_delay(50);
-        }
+		for(i=0; i < I2C_RETRY_COUNT; i++)
+		{
+			printf("send cmd:0x%02x\r\n",cmd);
+				vs_i2c_write(cmd);
+				i2c_delay(50);
+		}
 }
 
 
