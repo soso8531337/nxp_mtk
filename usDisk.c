@@ -109,13 +109,10 @@ static uint8_t usDisk_DeviceDetectHDD(uint8_t type, void *os_priv)
 {	
 	USB_StdDesDevice_t DeviceDescriptorData;
 	uint8_t MaxLUNIndex;
-	usDisk_info *pDiskInfo= usDisk_FindLocation(type);
+	usDisk_info DiskInfo;
 
-	if(pDiskInfo == NULL){
-		DSKDEBUG("No Found Location\r\n");
-		return DISK_REGEN;
-	}
-	usb_device *usbdev = &(pDiskInfo->diskdev);
+	memset(&DiskInfo, 0, sizeof(usDisk_info));
+	usb_device *usbdev = &(DiskInfo.diskdev);
 	usbdev->usb_type = type;
 	/*set os_priv*/
 	usUsb_Init(usbdev, os_priv);
@@ -123,7 +120,6 @@ static uint8_t usDisk_DeviceDetectHDD(uint8_t type, void *os_priv)
 	memset(&DeviceDescriptorData, 0, sizeof(USB_StdDesDevice_t));
 	if(usUsb_GetDeviceDescriptor(usbdev, &DeviceDescriptorData)){
 		DSKDEBUG("usUusb_GetDeviceDescriptor Failed\r\n");
-		memset(pDiskInfo, 0, sizeof(usDisk_info));
 		return DISK_REGEN;
 	}
 	
@@ -135,13 +131,11 @@ static uint8_t usDisk_DeviceDetectHDD(uint8_t type, void *os_priv)
 	nxpcall.bNumConfigurations = DeviceDescriptorData.bNumConfigurations;
 	if(usUsb_ClaimInterface(usbdev, &nxpcall)){
 		DSKDEBUG("Attached Device Not a Valid DiskDevice.\r\n");		
-		memset(pDiskInfo, 0, sizeof(usDisk_info));
 		return DISK_REINVAILD;
 	}
 
 	if(usUsb_GetMaxLUN(usbdev, &MaxLUNIndex)){		
 		printf("Get LUN Failed\r\n");		
-		memset(pDiskInfo, 0, sizeof(usDisk_info));
 		return DISK_REINVAILD;
 	}
 	printf(("Total LUNs: %d - Using first LUN in device.\r\n"), (MaxLUNIndex + 1));
@@ -150,23 +144,30 @@ static uint8_t usDisk_DeviceDetectHDD(uint8_t type, void *os_priv)
 	printf("Get RequestSense\r\n");		
 	if(usUsb_RequestSense(usbdev, MaxLUNIndex, &SenseData)){
 		DSKDEBUG("RequestSense Failed\r\n");		
-		memset(pDiskInfo, 0, sizeof(usDisk_info));
 		return DISK_REINVAILD;
 	}
 	printf("Get InquiryData\r\n");
 	SCSI_Inquiry_t InquiryData;
 	if(usUsb_GetInquiryData(usbdev, MaxLUNIndex, &InquiryData)){
 		printf("GetInquiryData Failed\r\n");		
-		memset(pDiskInfo, 0, sizeof(usDisk_info));
 		return DISK_REINVAILD;
 	}
+	printf("Get ReadDeviceCapacity\r\n");
+	if(usUsb_ReadDeviceCapacity(usbdev, &(DiskInfo.Blocks), &(DiskInfo.BlockSize))){
+		printf("ReadDeviceCapacity Failed\r\n");		
+		return DISK_REINVAILD;
+	}
+	DiskInfo.disk_cap = (int64_t)DiskInfo.BlockSize *DiskInfo.Blocks;
+	
+	usDisk_info *pDiskInfo= usDisk_FindLocation(type);
 
-	if(usUsb_ReadDeviceCapacity(usbdev, &(pDiskInfo->Blocks), &(pDiskInfo->BlockSize))){
-		DSKDEBUG("ReadDeviceCapacity Failed\r\n");		
-		memset(pDiskInfo, 0, sizeof(usDisk_info));
-		return DISK_REINVAILD;
+	if(pDiskInfo == NULL){
+		DSKDEBUG("No Found Location\r\n");
+		return DISK_REGEN;
 	}
-	pDiskInfo->disk_cap = (int64_t)pDiskInfo->BlockSize *pDiskInfo->Blocks;
+	DiskInfo.disknum = pDiskInfo->disknum;
+	memcpy(pDiskInfo, &DiskInfo, sizeof(usDisk_info));
+	
 	printf("Mass Storage Device Enumerated. [Num:%d Blocks:%d BlockSzie:%d Cap:%lld]\r\n",
 			pDiskInfo->disknum, pDiskInfo->Blocks, pDiskInfo->BlockSize, pDiskInfo->disk_cap);
 	return DISK_REOK;

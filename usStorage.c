@@ -118,7 +118,7 @@ static USB_ClassInfo_MS_Host_t UStorage_Interface[]	= {
 		},
 	},
 	{
-			.Config = {
+		.Config = {
 			.DataINPipeNumber       = 1,
 			.DataINPipeDoubleBank   = false,
 
