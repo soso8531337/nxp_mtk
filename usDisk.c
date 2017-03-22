@@ -16,11 +16,6 @@
 #include "USB.h"
 #include <ctype.h>
 #include <stdio.h>
-#elif defined(GP_CHIP)
-#include "USB.h"
-#include <ctype.h>
-#include <stdio.h>
-#include <string.h>
 #elif defined(LINUX)
 #include <stdio.h>
 #include <errno.h>
@@ -88,7 +83,7 @@ typedef struct {
 usDisk_info uDinfo[STOR_MAX];
 
 static usDisk_info * usDisk_FindLocation(uint8_t type);
-#if defined(NXP_CHIP_18XX) || defined(GP_CHIP)
+#if defined(NXP_CHIP_18XX)
 extern uint8_t DCOMP_MS_Host_NextMSInterfaceEndpoint(void* const CurrentDescriptor);
 /*****************************************************************************
  * Private functions
@@ -114,13 +109,10 @@ static uint8_t usDisk_DeviceDetectHDD(uint8_t type, void *os_priv)
 {	
 	USB_StdDesDevice_t DeviceDescriptorData;
 	uint8_t MaxLUNIndex;
-	usDisk_info *pDiskInfo= usDisk_FindLocation(type);
+	usDisk_info DiskInfo;
 
-	if(pDiskInfo == NULL){
-		DSKDEBUG("No Found Location\r\n");
-		return DISK_REGEN;
-	}
-	usb_device *usbdev = &(pDiskInfo->diskdev);
+	memset(&DiskInfo, 0, sizeof(usDisk_info));
+	usb_device *usbdev = &(DiskInfo.diskdev);
 	usbdev->usb_type = type;
 	/*set os_priv*/
 	usUsb_Init(usbdev, os_priv);
@@ -128,7 +120,6 @@ static uint8_t usDisk_DeviceDetectHDD(uint8_t type, void *os_priv)
 	memset(&DeviceDescriptorData, 0, sizeof(USB_StdDesDevice_t));
 	if(usUsb_GetDeviceDescriptor(usbdev, &DeviceDescriptorData)){
 		DSKDEBUG("usUusb_GetDeviceDescriptor Failed\r\n");
-		memset(pDiskInfo, 0, sizeof(usDisk_info));
 		return DISK_REGEN;
 	}
 	
@@ -140,13 +131,11 @@ static uint8_t usDisk_DeviceDetectHDD(uint8_t type, void *os_priv)
 	nxpcall.bNumConfigurations = DeviceDescriptorData.bNumConfigurations;
 	if(usUsb_ClaimInterface(usbdev, &nxpcall)){
 		DSKDEBUG("Attached Device Not a Valid DiskDevice.\r\n");		
-		memset(pDiskInfo, 0, sizeof(usDisk_info));
 		return DISK_REINVAILD;
 	}
 
 	if(usUsb_GetMaxLUN(usbdev, &MaxLUNIndex)){		
 		printf("Get LUN Failed\r\n");		
-		memset(pDiskInfo, 0, sizeof(usDisk_info));
 		return DISK_REINVAILD;
 	}
 	printf(("Total LUNs: %d - Using first LUN in device.\r\n"), (MaxLUNIndex + 1));
@@ -155,23 +144,30 @@ static uint8_t usDisk_DeviceDetectHDD(uint8_t type, void *os_priv)
 	printf("Get RequestSense\r\n");		
 	if(usUsb_RequestSense(usbdev, MaxLUNIndex, &SenseData)){
 		DSKDEBUG("RequestSense Failed\r\n");		
-		memset(pDiskInfo, 0, sizeof(usDisk_info));
 		return DISK_REINVAILD;
 	}
 	printf("Get InquiryData\r\n");
 	SCSI_Inquiry_t InquiryData;
 	if(usUsb_GetInquiryData(usbdev, MaxLUNIndex, &InquiryData)){
 		printf("GetInquiryData Failed\r\n");		
-		memset(pDiskInfo, 0, sizeof(usDisk_info));
 		return DISK_REINVAILD;
 	}
 	printf("Get ReadDeviceCapacity\r\n");
-	if(usUsb_ReadDeviceCapacity(usbdev, &(pDiskInfo->Blocks), &(pDiskInfo->BlockSize))){
+	if(usUsb_ReadDeviceCapacity(usbdev, &(DiskInfo.Blocks), &(DiskInfo.BlockSize))){
 		printf("ReadDeviceCapacity Failed\r\n");		
-		memset(pDiskInfo, 0, sizeof(usDisk_info));
 		return DISK_REINVAILD;
 	}
-	pDiskInfo->disk_cap = (int64_t)pDiskInfo->BlockSize *pDiskInfo->Blocks;
+	DiskInfo.disk_cap = (int64_t)DiskInfo.BlockSize *DiskInfo.Blocks;
+	
+	usDisk_info *pDiskInfo= usDisk_FindLocation(type);
+
+	if(pDiskInfo == NULL){
+		DSKDEBUG("No Found Location\r\n");
+		return DISK_REGEN;
+	}
+	DiskInfo.disknum = pDiskInfo->disknum;
+	memcpy(pDiskInfo, &DiskInfo, sizeof(usDisk_info));
+	
 	printf("Mass Storage Device Enumerated. [Num:%d Blocks:%d BlockSzie:%d Cap:%lld]\r\n",
 			pDiskInfo->disknum, pDiskInfo->Blocks, pDiskInfo->BlockSize, pDiskInfo->disk_cap);
 	return DISK_REOK;
@@ -179,10 +175,6 @@ static uint8_t usDisk_DeviceDetectHDD(uint8_t type, void *os_priv)
 
 static uint8_t usDisk_DeviceDetectCard(uint8_t type, void *os_priv)
 {
-#if defined(GP_CHIP)
-	DSKDEBUG("Not Support SDCard\r\n");
-	return DISK_REGEN;
-#elif defined(NXP_CHIP_18XX)
 	usDisk_info *pDiskInfo= usDisk_FindLocation(type);
 	mci_card_struct *sdinfo = (mci_card_struct *)os_priv;
 	
@@ -202,8 +194,7 @@ static uint8_t usDisk_DeviceDetectCard(uint8_t type, void *os_priv)
 	printf("SD Card Enumerated. [Num:%d Blocks:%d BlockSzie:%u Cap:%lld]\r\n",
 			pDiskInfo->disknum, pDiskInfo->Blocks, pDiskInfo->BlockSize, pDiskInfo->disk_cap);
 
-	return DISK_REOK;
-#endif	
+	return DISK_REOK;	
 }
 
 void usDisk_DeviceInit(void *os_priv)

@@ -19,11 +19,6 @@
 #include <ctype.h>
 #include <stdio.h>
 #include "i2c.h"
-#elif defined(GP_CHIP)
-//#include "USB.h"
-#include <string.h>
-#include <ctype.h>
-#include <stdio.h>
 #elif defined(LINUX)
 #include <stdio.h>
 #include <errno.h>
@@ -405,7 +400,6 @@ int usStorage_firmwareUP(uint8_t *buffer, uint32_t recvSize)
 	struct scsi_head scsi;	
 	uint8_t headbuf[PRO_HDR] = {0}; 
 	uint32_t hSize = recvSize;
-	uint8_t res;
 
 	if(recvSize < PRO_HDR){
 		FRIMDEBUG("Frimware Request Error\r\n");
@@ -439,16 +433,11 @@ int usStorage_firmwareUP(uint8_t *buffer, uint32_t recvSize)
 		}
 		while(curSize < scsi.len){
 			uint8_t *pbuffer = NULL;
-			if((res = usProtocol_RecvPackage((void **)&pbuffer, hSize, &paySize)) != 0){
-				if(res == PROTOCOL_RTIMOUT){
-					FRIMDEBUG("Firmware Receive Timeout\r\n");
-					return -1;	
-				}else{
-					FRIMDEBUG("usProtocol_RecvPackage Failed IN Firmware\r\n");
-					/*Write to Phone*/
-					scsi.relag = 1;		
-					goto sndRes;
-				}
+			if(usProtocol_RecvPackage((void **)&pbuffer, hSize, &paySize)){
+				FRIMDEBUG("usProtocol_RecvPackage Failed IN Firmware\r\n");
+				/*Write to Phone*/
+				scsi.relag = 1;
+				goto sndRes;
 			}
 			hSize+= paySize;
 			if(firminfo == NULL){
@@ -509,47 +498,6 @@ sndRes:
 	return 0;
 }
 
-#elif defined(GP_CHIP)
-int usStorage_firmwareINFO(struct scsi_head *header)
-{
-	vs_acessory_parameter dinfo;	
-	int flen = sizeof(vs_acessory_parameter);
-	uint8_t *buffer = NULL, rc = 0;
-	uint32_t size = 0, total = 0;
-	if(usProtocol_GetAvaiableBuffer((void **)&buffer, &size)){
-		FRIMDEBUG("usProtocol_GetAvaiableBuffer Failed\r\n");
-		return 1;
-	}	
-	FRIMDEBUG("AvaiableBuffer 0x%p[%dBytes]\r\n", buffer, size);
-
-	total = sizeof(struct scsi_head);
-	memcpy(buffer, header, total);
-
-
-	memset(&dinfo, 0, sizeof(vs_acessory_parameter));
-	strcpy(dinfo.fw_version, "2.000.002");
-	strcpy(dinfo.hw_version, "1.0");
-	strcpy(dinfo.manufacture, "i4season");
-	strcpy(dinfo.model_name, "uStorage");
-	strcpy(dinfo.sn, "1234567890");
-	strcpy(dinfo.cardid, "1234567");
-	strcpy(dinfo.license, "1234567890");
-	memcpy(buffer+total, &dinfo, flen);
-	total += flen;
-
-	if((rc = usProtocol_SendPackage(buffer, total)) != 0){
-		FRIMDEBUG("usProtocol_SendPackage Failed\r\n");
-		return rc;
-	}
-	printf("usStorage_firmwareINFO Successful Firmware Info:\r\nVendor:%s\r\nProduct:%s\r\nVersion:%s\r\nSerical:%s\r\nLicense:%s\r\n", 
-					dinfo.manufacture, dinfo.model_name, dinfo.fw_version, dinfo.sn, dinfo.license);
-
-	return 0;
-}
-int usStorage_firmwareUP(uint8_t *buffer, uint32_t recvSize)
-{
-	return 0;
-}
 #elif defined(LINUX)
 
 #define FILENAME "/dev/mtdblock2"
@@ -899,17 +847,12 @@ int usStorage_firmwareUP(uint8_t *buffer, uint32_t recvSize)
 			curSize += paySize;
 		}
 		while(curSize < scsi.len){
-			uint8_t *pbuffer = NULL, res;
-			if((res = usProtocol_RecvPackage((void **)&pbuffer, hSize, &paySize)) != 0){
-				if(res == PROTOCOL_RTIMOUT){
-					FRIMDEBUG("Firmware Receive Timeout\r\n");
-					return -1;	
-				}else{
-					FRIMDEBUG("usProtocol_RecvPackage Failed IN Firmware\r\n");
-					/*Write to Phone*/
-					scsi.relag = 1;
-					goto sndRes;
-				}
+			uint8_t *pbuffer = NULL;
+			if(usProtocol_RecvPackage((void **)&pbuffer, hSize, &paySize)){
+				FRIMDEBUG("usProtocol_RecvPackage Failed IN Firmware\r\n");
+				/*Write to Phone*/
+				scsi.relag = 1;
+				goto sndRes;
 			}
 			hSize+= paySize;
 			if(writeFirmware(fd, pbuffer, paySize) < 0){

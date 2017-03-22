@@ -27,11 +27,6 @@
 #include <unistd.h>
 #include <errno.h>
 #include <libusb-1.0/libusb.h>
-#elif defined(GP_CHIP)
-#include "USB.h"
-#include <ctype.h>
-#include <stdio.h>
-
 #endif
 
 #if defined(DEBUG_ENABLE1)
@@ -990,562 +985,6 @@ uint8_t LINUX_DiskWriteSectors(usb_device *usbdev,
 	
 	return USB_REOK;
 }
-#elif defined(GP_CHIP)
-/*Special USB Command*/
-#define GP_USB_TIMEOUT		2000
-static uint8_t GP_SendControlRequest(const uint8_t corenum, 
-			uint8_t bmRequestType, uint8_t bRequest, 
-			uint16_t wValue, uint16_t wIndex, uint16_t wLength, void * const data)
-{
-	USB_ControlRequest = (USB_Request_Header_t)
-		{
-		.bmRequestType = (bmRequestType),
-		.bRequest      = bRequest,
-		.wValue        = wValue,
-		.wIndex        = wIndex,
-		.wLength       = wLength,
-		};
-
-	return LIBUSB_Host_SendControlRequest(corenum,data);
-}
-
-static uint8_t GP_BlukPacketReceiveStream(usb_device *usbdev, uint8_t *buffer, 
-				uint32_t length, uint32_t *actual_length)
-{
-	uint8_t  ErrorCode = PIPE_RWSTREAM_NoError;
-	uint32_t already = 0;
-	const USB_ClassInfo_MS_Host_t *MSInterfaceInfo = (USB_ClassInfo_MS_Host_t *)usbdev->os_priv;
-
-	if(!usbdev || !buffer || !actual_length){
-		return USB_REPARA;
-	}
-	Pipe_SelectPipe(MSInterfaceInfo->Config.PortNumber, 
-			MSInterfaceInfo->Config.DataINPipeNumber);	
-	*actual_length = 0;
-	while (already < length) {
-		uint32_t actual = 0;
-		if(already == 0 && length > 512){
-			/*we must receive 512*n, if it is not 512*n, divide twice*/
-			ErrorCode = Pipe_Streaming(MSInterfaceInfo->Config.PortNumber,
-							buffer, length-length%512, &actual, GP_USB_TIMEOUT);
-		}else{
-			ErrorCode = Pipe_Streaming(MSInterfaceInfo->Config.PortNumber,
-							buffer+already, length-already, &actual, GP_USB_TIMEOUT);
-		}
-		if (ErrorCode) {
-			USBDEBUG("USB Receive Error[%d]\r\n", ErrorCode);
-			return ErrorCode;
-		}
-		already+= actual;
-		*actual_length += actual;
-
-		//USBDEBUG("USB Stream HcdDataTransfer Receive[%d]\r\n", Pipe_BytesInPipe(corenum));
-	}
-
-	USBDEBUG("USB Stream Receive [%d/%dBytes]\r\n", *actual_length, length);
-
-	return USB_REOK;
-}
-
-static uint8_t GP_BlukPacketReceive(usb_device *usbdev, uint8_t *buffer, 
-			uint32_t length, uint32_t *actual_length)
-{
-	uint8_t  ErrorCode = PIPE_RWSTREAM_NoError;
-	
-	const USB_ClassInfo_MS_Host_t *MSInterfaceInfo = (USB_ClassInfo_MS_Host_t *)usbdev->os_priv;
-
-	if(!usbdev || !buffer || !actual_length){
-		return USB_REPARA;
-	}
-	Pipe_SelectPipe(MSInterfaceInfo->Config.PortNumber, 
-			MSInterfaceInfo->Config.DataINPipeNumber);
-
-	ErrorCode = Pipe_Streaming(MSInterfaceInfo->Config.PortNumber, buffer, 
-					length, actual_length, GP_USB_TIMEOUT);
-	if (ErrorCode) {
-		USBDEBUG("USB Receive Error[%d]\r\n", ErrorCode);
-		return ErrorCode;
-	}
-	*actual_length = length;
-	USBDEBUG("USB Receive [%d/%dBytes]\r\n", *actual_length, length);
-
-	return USB_REOK;
-}	
-
-static uint8_t GP_BlukPacketSend(usb_device *usbdev, uint8_t *buffer, 
-                                  uint32_t length, uint32_t *actual_length)
-{
-	uint8_t  ErrorCode = PIPE_RWSTREAM_NoError;
-	const USB_ClassInfo_MS_Host_t *MSInterfaceInfo;
-	uint32_t already = 0;
-	
-	if(!usbdev || !buffer || !actual_length){
-		return USB_REPARA;
-	}
-	
-	MSInterfaceInfo = (USB_ClassInfo_MS_Host_t *)usbdev->os_priv;
-	Pipe_SelectPipe(MSInterfaceInfo->Config.PortNumber, 
-			MSInterfaceInfo->Config.DataOUTPipeNumber);	
-	*actual_length= 0;
-	while(already < length){
-		uint32_t sndlen = 0;
-		
-		if(already == 0 && length % 512 == 0){
-			ErrorCode = Pipe_Streaming(MSInterfaceInfo->Config.PortNumber,
-								buffer, length-1, &sndlen, GP_USB_TIMEOUT);
-		}else{
-			ErrorCode = Pipe_Streaming(MSInterfaceInfo->Config.PortNumber,
-								buffer+already, length-already, &sndlen, GP_USB_TIMEOUT);
-		}
-		
-		if (ErrorCode) {
-			USBDEBUG("USB Send Error[%d]\r\n", ErrorCode);
-			return ErrorCode;
-		}
-		USBDEBUG("Send PiPe Streaming Write[%dBytes]...\r\n", sndlen);
-		already += sndlen;		
-		*actual_length += sndlen;	
-	}
-	USBDEBUG("USB Send [%d/%dBytes]\r\n", *actual_length, length);
-	return USB_REOK;
-}
-
-static uint8_t GP_GetDeviceDescriptor(usb_device *usbdev, USB_StdDesDevice_t *DeviceDescriptorData)
-{	
-	if(!DeviceDescriptorData || !usbdev){
-		return USB_REPARA;
-	}
-	if(LIBUSB_Host_GetDeviceDescriptor(usbdev->device_address, (USB_Descriptor_Device_t*)DeviceDescriptorData)){
-		USBDEBUG("Error Getting Device Descriptor.\r\n");
-		return USB_REGEN;
-	}
-	return USB_REOK;
-}
-
-static uint8_t GP_GetDeviceConfigDescriptor(usb_device *usbdev, uint8_t index, uint16_t *cfgsize,
-					uint8_t *ConfigDescriptorData, uint16_t ConfigDescriptorDataLen)
-{	
-	if(!ConfigDescriptorData || !usbdev || !cfgsize){
-		return USB_REPARA;
-	}
-	if (LIBUSB_Host_GetDeviceConfigDescriptor(usbdev->device_address, index, cfgsize, 
-				ConfigDescriptorData, ConfigDescriptorDataLen) != HOST_GETCONFIG_Successful) {
-		USBDEBUG("Error Retrieving Configuration Descriptor.\r\n");
-		return USB_REGEN;
-	}
-
-	return USB_REOK;
-}
-
-static uint8_t GP_SetDeviceConfigDescriptor(usb_device *usbdev, uint8_t cfgindex)
-{	
-	if(!usbdev){
-		return USB_REPARA;
-	}
-	if (LIBUSB_Host_SetDeviceConfiguration(usbdev->device_address, cfgindex) != 
-				HOST_SENDCONTROL_Successful) {
-		USBDEBUG("Error Setting Device Configuration.\r\n");
-		return USB_REGEN;
-	}
-	
-	return USB_REOK;
-}
-
-static uint8_t GP_ClaimInterface(usb_device *usbdev, nxp_clminface*cPrivate)
-{
-	USB_Descriptor_Endpoint_t*  DataINEndpoint       = NULL;
-	USB_Descriptor_Endpoint_t*  DataOUTEndpoint      = NULL;
-	USB_Descriptor_Interface_t* MassStorageInterface = NULL;
-	uint8_t portnum = 0, curConfigurations = 1;
-	uint16_t ConfigDescriptorSize = 0;
-	uint8_t  ConfigDescriptorData[512], *PtrConfigDescriptorData = NULL;
-	
-
-	if(!cPrivate){
-		return USB_REPARA;
-	}
-	USB_ClassInfo_MS_Host_t *MSInterfaceInfo = (USB_ClassInfo_MS_Host_t *)(usbdev->os_priv);
-	if( !MSInterfaceInfo||
-			!cPrivate->callbackEndpoint || !cPrivate->callbackInterface){
-		return USB_REPARA;
-	}
-
-	for(curConfigurations= 1; curConfigurations <= cPrivate->bNumConfigurations; curConfigurations++){
-		if (LIBUSB_Host_GetDeviceConfigDescriptor(MSInterfaceInfo->Config.PortNumber, 
-								curConfigurations, &ConfigDescriptorSize, ConfigDescriptorData,
-								sizeof(ConfigDescriptorData)) != HOST_GETCONFIG_Successful) {
-			USBDEBUG("Error Retrieving Configuration Descriptor.\r\n");
-			continue;
-		}
-		if (DESCRIPTOR_TYPE(ConfigDescriptorData) != DTYPE_Configuration){
-			continue;
-		}		
-		usUsb_Print(ConfigDescriptorData, ConfigDescriptorSize); 
-		/*Set array name to point var, USB_GetNextDescriptorComp will change point*/
-		PtrConfigDescriptorData = ConfigDescriptorData;		
-		while (!(DataINEndpoint) || !(DataOUTEndpoint)){
-			if (!(MassStorageInterface) ||
-					USB_GetNextDescriptorComp(&ConfigDescriptorSize, (void **)&PtrConfigDescriptorData,
-							cPrivate->callbackEndpoint) != DESCRIPTOR_SEARCH_COMP_Found){
-				if (USB_GetNextDescriptorComp(&ConfigDescriptorSize, (void **)&PtrConfigDescriptorData,
-							cPrivate->callbackInterface) != DESCRIPTOR_SEARCH_COMP_Found){
-					DataINEndpoint	= NULL;
-					DataOUTEndpoint = NULL;
-					MassStorageInterface = NULL;					
-					USBDEBUG("No Found Vaild Interface At Configuration[%d].\r\n", curConfigurations);
-					break;
-				}
-				MassStorageInterface = DESCRIPTOR_PCAST(PtrConfigDescriptorData, USB_Descriptor_Interface_t);
-
-				DataINEndpoint  = NULL;
-				DataOUTEndpoint = NULL;
-
-				continue;
-			}
-
-			USB_Descriptor_Endpoint_t* EndpointData = DESCRIPTOR_PCAST(PtrConfigDescriptorData, USB_Descriptor_Endpoint_t);
-
-			if ((EndpointData->EndpointAddress & ENDPOINT_DIR_MASK) == ENDPOINT_DIR_IN){
-				DataINEndpoint  = EndpointData;				
-				USBDEBUG("Found Vaild INInterface At Configuration[%d].\r\n", curConfigurations);
-			}else{
-				DataOUTEndpoint = EndpointData;				
-				USBDEBUG("Found Vaild OUTInterface At Configuration[%d].\r\n", curConfigurations);
-			}			
-		}
-		if(DataINEndpoint && DataOUTEndpoint){
-			break;
-		}
-	}
-	if(!(DataINEndpoint) || !(DataOUTEndpoint) ||
-			(curConfigurations > cPrivate->bNumConfigurations)){
-		USBDEBUG("No Found Suitable Interface.\r\n");
-		return USB_REGEN;
-	}
-	memset(&MSInterfaceInfo->State, 0x00, sizeof(MSInterfaceInfo->State));	
-	portnum = MSInterfaceInfo->Config.PortNumber;
-	for (uint8_t PipeNum = 1; PipeNum < PIPE_TOTAL_PIPES; PipeNum++){
-		uint16_t Size;
-		uint8_t  Type;
-		uint8_t  Token;
-		uint8_t  EndpointAddress;
-		bool     DoubleBanked;
-
-		if (PipeNum == MSInterfaceInfo->Config.DataINPipeNumber){
-			Size            = le16_to_cpu(DataINEndpoint->EndpointSize);
-			EndpointAddress = DataINEndpoint->EndpointAddress;
-			Token           = PIPE_TOKEN_IN;
-			Type            = EP_TYPE_BULK;
-			DoubleBanked    = MSInterfaceInfo->Config.DataINPipeDoubleBank;
-
-			MSInterfaceInfo->State.DataINPipeSize = DataINEndpoint->EndpointSize;
-			
-		}else if (PipeNum == MSInterfaceInfo->Config.DataOUTPipeNumber){
-			Size            = le16_to_cpu(DataOUTEndpoint->EndpointSize);
-			EndpointAddress = DataOUTEndpoint->EndpointAddress;
-			Token           = PIPE_TOKEN_OUT;
-			Type            = EP_TYPE_BULK;
-			DoubleBanked    = MSInterfaceInfo->Config.DataOUTPipeDoubleBank;
-			
-			MSInterfaceInfo->State.DataOUTPipeSize = DataOUTEndpoint->EndpointSize;
-		}else{
-			continue;
-		}
-
-		if (!(Pipe_ConfigurePipe(portnum,PipeNum, Type, Token, EndpointAddress, Size,
-		                         DoubleBanked ? PIPE_BANK_DOUBLE : PIPE_BANK_SINGLE))){
-			return USB_REGEN;
-		}
-	}
-
-	/*Set Configuration*/
-	if(GP_SetDeviceConfigDescriptor(usbdev, curConfigurations)){
-		USBDEBUG("Error Setting Device Configuration.\r\n");
-		return USB_REGEN;
-	}
-
-	MSInterfaceInfo->State.InterfaceNumber = MassStorageInterface->InterfaceNumber;
-	MSInterfaceInfo->State.IsActive = true;
-	/*Set the usbdev struct*/
-	usbdev->device_address= MSInterfaceInfo->Config.PortNumber;
-	usbdev->wMaxPacketSize = MSInterfaceInfo->State.DataOUTPipeSize;
-	usbdev->ep_in = MSInterfaceInfo->Config.DataINPipeNumber;
-	usbdev->ep_out = MSInterfaceInfo->Config.DataOUTPipeNumber;
-	return USB_REOK;
-}
-
-static uint8_t GP_Init(usb_device *usbdev, void *os_priv)
-{
-	USB_ClassInfo_MS_Host_t *MSInterfaceInfo;
-	/*os_priv is USB_ClassInfo_MS_Host_t *MSInterfaceInfo*/
-	if(!usbdev || !os_priv){
-		return USB_REPARA;
-	}
-	usbdev->os_priv = os_priv;
-
-	if(usbdev->usb_type != USB_CARD){
-		MSInterfaceInfo = (USB_ClassInfo_MS_Host_t *)(os_priv);
-		/*Just set device_address == PortNumber*/
-		usbdev->device_address  = MSInterfaceInfo->Config.PortNumber;
-	}
-
-	return USB_REOK;
-}
-
-#ifdef NXP_DISK_LIMITSIZE /*limit read write disk size*/
-uint8_t GP_DiskReadSectors(usb_device *usbdev, 
-				void *buff, uint32_t secStart, uint32_t numSec, uint16_t BlockSize)
-{
-	int ret;
-	uint8_t *curBuf = NULL;
-	uint32_t already = 0, curSec;
-	uint8_t numSecPer;
-
-	curBuf = (uint8_t*)buff;
-	curSec = secStart;
-	while(already < numSec){		
-		if(numSec-already > MAX_SCSI_SECTOR){
-			numSecPer = MAX_SCSI_SECTOR;
-		}else{
-			numSecPer = numSec-already;
-		}
-		if(usbdev->usb_type == USB_CARD){
-			USBDEBUG("Error Dose Not Support SDCard\r\n"); 		
-			return USB_REOK;
-		}else{	
-			ret = MassStorage_ReadDeviceBlocks((USB_ClassInfo_MS_Host_t*)usbdev->os_priv, 0, 
-								curSec, numSecPer, BlockSize, (void *)(curBuf+already*BlockSize));
-			if(ret) {
-				printf("Error reading device block. ret = %d\r\n", ret);				
-				/*Read Error not Reset Device Configuration modify by zhangwei 20170118*/
-				//USB_Host_SetDeviceConfiguration(usbdev->device_address, 0);
-				return USB_REGEN;
-			}
-		}
-		already += numSecPer;
-		curSec += numSecPer;
-		USBDEBUG("SCSI Read %dSectors [%d/%d/%d]\r\n", numSecPer, curSec, already, numSec);		
-	}
-
-	return USB_REOK;
-}
-
-uint8_t GP_DiskWriteSectors(usb_device *usbdev, 
-					void *buff, uint32_t secStart, uint32_t numSec, uint16_t BlockSize)
-{
-	int ret;
-	uint8_t *curBuf = NULL;
-	uint32_t already = 0, curSec;
-	uint8_t numSecPer;
-
-	curBuf = (uint8_t*)buff;
-	curSec = secStart;
-	while(already < numSec){		
-		if(numSec-already > MAX_SCSI_SECTOR){
-			numSecPer = MAX_SCSI_SECTOR;
-		}else{
-			numSecPer = numSec-already;
-		}
-		if(usbdev->usb_type == USB_CARD){
-			USBDEBUG("Error Dose Not Support SDCard\r\n"); 		
-			return USB_REOK;
-		}else{
-			ret = MassStorage_WriteDeviceBlocks((USB_ClassInfo_MS_Host_t*)usbdev->os_priv, 0, 
-								curSec, numSecPer, BlockSize, (void *)(curBuf+already*BlockSize));
-			if(ret) {
-				printf("Error writing device block. ret = %d\r\n", ret);				
-				/*Write Error not Reset Device Configuration modify by zhangwei 20170118*/
-				//USB_Host_SetDeviceConfiguration(usbdev->device_address, 0);
-				return USB_REGEN;
-			}
-		}
-		already += numSecPer;
-		curSec += numSecPer;
-		USBDEBUG("SCSI Write %dSectors [%d/%d/%d]\r\n", numSecPer, curSec, already, numSec);		
-	}
-
-	return USB_REOK;
-}
-
-#else
-uint8_t GP_DiskReadSectors(usb_device *usbdev, 
-				void *buff, uint32_t secStart, uint32_t numSec, uint16_t BlockSize)
-{
-	int ret;
-
-	if(!usbdev || !buff){
-		printf("Parameter Error\r\n");
-		return USB_REPARA;
-	}
-	if(usbdev->usb_type == USB_CARD){
-
-		USBDEBUG("Error Dose Not Support SDCard\r\n");		
-		return USB_REOK;
-	}else{
-		/*USB Storage Read*/
-		ret = MassStorage_ReadDeviceBlocks((USB_ClassInfo_MS_Host_t*)usbdev->os_priv, 0, 
-				secStart, numSec, BlockSize, buff);
-		if(ret) {
-			printf("Error reading device block. ret = %d\r\n", ret);
-			/*Read Error not Reset Device Configuration modify by zhangwei 20170118*/
-			//USB_Host_SetDeviceConfiguration(usbdev->device_address, 0);
-			return USB_REGEN;
-		}	
-		USBDEBUG("SCSI Read %dSectors [StarSector:%d]\r\n", numSec, secStart); 	
-	}
-	return USB_REOK;
-}
-
-uint8_t GP_DiskWriteSectors(usb_device *usbdev, 
-					void *buff, uint32_t secStart, uint32_t numSec, uint16_t BlockSize)
-{
-	int ret;
-
-	if(!usbdev || !buff){
-		printf("Parameter Error\r\n");
-		return USB_REPARA;
-	}
-	if(usbdev->usb_type == USB_CARD){
-		USBDEBUG("Error Dose Not Support SDCard\r\n");		
-		return USB_REOK;
-	}else{
-		/*USB Storage Write*/
-		ret = MassStorage_WriteDeviceBlocks((USB_ClassInfo_MS_Host_t*)usbdev->os_priv, 0, 
-						secStart, numSec, BlockSize, buff);
-		if(ret) {
-			printf("Error writing device block. ret = %d\r\n", ret);			
-			/*Write Error not Reset Device Configuration modify by zhangwei 20170118*/
-			//USB_Host_SetDeviceConfiguration(usbdev->device_address, 0);
-			return USB_REGEN;
-		}
-		USBDEBUG("SCSI Write %dSectors [StarSector:%d]\r\n", numSec, secStart); 	
-	}
-	return USB_REOK;
-}
-#endif
-
-uint8_t GP_GetMaxLUN(usb_device *usbdev, uint8_t *LunIndex)
-{
-	USB_ClassInfo_MS_Host_t *MSInterfaceInfo;
-	/*os_priv is USB_ClassInfo_MS_Host_t *MSInterfaceInfo*/
-	if(!usbdev || !LunIndex){
-		return USB_REPARA;
-	}
-	MSInterfaceInfo = (USB_ClassInfo_MS_Host_t *)(usbdev->os_priv);
-
-	if (MassStorage_GetMaxLUN(MSInterfaceInfo, LunIndex)) {
-		LIBUSB_Host_SetDeviceConfiguration(usbdev->device_address, 0);
-		return USB_REGEN;
-	}
-
-	return USB_REOK;
-}
-
-uint8_t GP_ResetMSInterface(usb_device *usbdev)
-{
-	USB_ClassInfo_MS_Host_t *MSInterfaceInfo;
-	/*os_priv is USB_ClassInfo_MS_Host_t *MSInterfaceInfo*/
-	if(!usbdev){
-		return USB_REPARA;
-	}
-	
-	MSInterfaceInfo = (USB_ClassInfo_MS_Host_t *)(usbdev->os_priv);
-
-	if (MassStorage_Host_ResetMSInterface(MSInterfaceInfo)) {
-		USBDEBUG("Error resetting Mass Storage interface.\r\n");
-		LIBUSB_Host_SetDeviceConfiguration(usbdev->device_address, 0);
-		return USB_REGEN;
-	}
-	
-	return USB_REOK;	
-}
-
-uint8_t GP_RequestSense(usb_device *usbdev, 
-				uint8_t index, SCSI_Sense_Response_t *SenseData)
-{
-	USB_ClassInfo_MS_Host_t *MSInterfaceInfo;
-	/*os_priv is USB_ClassInfo_MS_Host_t *MSInterfaceInfo*/
-	if(!usbdev || !SenseData){
-		return USB_REPARA;
-	}
-	
-	MSInterfaceInfo = (USB_ClassInfo_MS_Host_t *)(usbdev->os_priv);
-
-	if (MassStorage_RequestSense(MSInterfaceInfo, index, 
-					(SCSI_Request_Sense_Response_t*)SenseData) != 0) {
-		USBDEBUG("Error retrieving device sense.\r\n");
-		LIBUSB_Host_SetDeviceConfiguration(usbdev->device_address, 0);
-		return USB_REGEN;
-	}
-	
-	return USB_REOK;	
-}
-
-uint8_t GP_GetInquiryData(usb_device *usbdev,
-						uint8_t index, SCSI_Inquiry_t *InquiryData)
-{
-	USB_ClassInfo_MS_Host_t *MSInterfaceInfo;
-	/*os_priv is USB_ClassInfo_MS_Host_t *MSInterfaceInfo*/
-	if(!usbdev || !InquiryData){
-		return USB_REPARA;
-	}
-	
-	MSInterfaceInfo = (USB_ClassInfo_MS_Host_t *)(usbdev->os_priv);
-
-	if (MassStorage_GetInquiryData(MSInterfaceInfo, index, (SCSI_Inquiry_Response_t*)InquiryData) != 0) {
-		USBDEBUG("Error retrieving device Inquiry.\r\n");
-		LIBUSB_Host_SetDeviceConfiguration(usbdev->device_address, 0);
-		return USB_REGEN;
-	}
-	
-	return USB_REOK;
-}
-
-uint8_t GP_ReadDeviceCapacity(usb_device *usbdev, uint32_t *Blocks, uint32_t *BlockSize)
-{
-	SCSI_Capacity_t DiskCapacity;
-	USB_ClassInfo_MS_Host_t *MSInterfaceInfo;
-	uint8_t loopCount = 0;
-	/*os_priv is USB_ClassInfo_MS_Host_t *MSInterfaceInfo*/
-	if(!usbdev || !Blocks|| !BlockSize){
-		return USB_REPARA;
-	}
-	
-	MSInterfaceInfo = (USB_ClassInfo_MS_Host_t *)(usbdev->os_priv);
-	for (loopCount=0; loopCount< 0x80; loopCount++) {
-		uint8_t ErrorCode = MassStorage_TestUnitReady(MSInterfaceInfo, 0);
-		if (!(ErrorCode)) {
-			break;
-		}
-		/* Check if an error other than a logical command error (device busy) received */
-		if (ErrorCode != MS_ERROR_LOGICAL_CMD_FAILED) {
-			USBDEBUG("Failed\r\n");
-			LIBUSB_Host_SetDeviceConfiguration(usbdev->device_address, 0);
-			return USB_REGEN;
-		}
-	}
-	if(loopCount == 0x80){
-		USBDEBUG("MS_Host_TestUnitReady Not Ready, May Be no HDD or HDD Bad\r\n");
-		return USB_REGEN;
-	}
-	if (MassStorage_ReadDeviceCapacity(MSInterfaceInfo, 0, &DiskCapacity)) {
-		USBDEBUG("Error retrieving device capacity.\r\n");
-		LIBUSB_Host_SetDeviceConfiguration(usbdev->device_address, 0);
-		return USB_REGEN;
-	}
-	*Blocks = DiskCapacity.Blocks;
-	*BlockSize = DiskCapacity.BlockSize;
-	
-	return USB_REOK;
-}
-
-uint8_t GP_DiskStartStop(usb_device *usbdev,
-						uint8_t index, uint8_t state)
-{
-	printf("%s Lun %d Successful..\r\n", 
-			((state == 1)?"Start":"Stop"), index);
-	return USB_REOK;
-}
 
 #endif
 
@@ -1577,12 +1016,6 @@ uint8_t usUsb_SendControlRequest(usb_device *usbdev,
 	}
 	return LINUX_SendControlRequest(usbdev->os_priv, bmRequestType,
 				bRequest, wValue, wIndex, wLength, data);
-#elif defined(GP_CHIP)
-	if(!usbdev){
-		return USB_REPARA;
-	}
-	return GP_SendControlRequest(usbdev->device_address, bmRequestType,
-				bRequest, wValue, wIndex, wLength, data);
 #endif
 }
 
@@ -1593,8 +1026,6 @@ uint8_t usUsb_BlukPacketSend(usb_device *usbdev, uint8_t *buffer,
 	return NXP_BlukPacketSend(usbdev, buffer, length, actual_length);
 #elif defined(LINUX)
 	return LINUX_BlukPacketSend(usbdev, buffer, length, actual_length);
-#elif defined(GP_CHIP)
-	return GP_BlukPacketSend(usbdev, buffer, length, actual_length);
 #endif
 }
 
@@ -1604,9 +1035,7 @@ uint8_t usUsb_BlukPacketReceive(usb_device *usbdev, uint8_t *buffer,
 #if defined(NXP_CHIP_18XX)
 	return NXP_BlukPacketReceive(usbdev, buffer, length, actual_length);
 #elif defined(LINUX)
-	return LINUX_BlukPacketReceiveTmout(usbdev, buffer, length, actual_length, 2000);
-#elif defined(GP_CHIP)
-	return GP_BlukPacketReceive(usbdev, buffer, length, actual_length);
+	return LINUX_BlukPacketReceive(usbdev, buffer, length, actual_length);
 #endif
 
 }
@@ -1618,8 +1047,6 @@ uint8_t usUsb_BlukPacketReceiveTmout(usb_device *usbdev, uint8_t *buffer,
 	return NXP_BlukPacketReceive(usbdev, buffer, length, actual_length);
 #elif defined(LINUX)
 	return LINUX_BlukPacketReceiveTmout(usbdev, buffer, length, actual_length, timeout);
-#elif defined(GP_CHIP)
-	return GP_BlukPacketReceive(usbdev, buffer, length, actual_length);
 #endif
 
 }
@@ -1630,9 +1057,7 @@ uint8_t usUsb_BlukPacketReceiveStream(usb_device *usbdev, uint8_t *buffer,
 #if defined(NXP_CHIP_18XX)
 	return NXP_BlukPacketReceiveStream(usbdev, buffer, length, actual_length);
 #elif defined(LINUX)
-	return LINUX_BlukPacketReceiveTmout(usbdev, buffer, length, actual_length, 2000);
-#elif defined(GP_CHIP)
-	return GP_BlukPacketReceiveStream(usbdev, buffer, length, actual_length);
+	return LINUX_BlukPacketReceive(usbdev, buffer, length, actual_length);
 #endif
 
 }
@@ -1643,8 +1068,6 @@ uint8_t usUsb_GetDeviceDescriptor(usb_device *usbdev, USB_StdDesDevice_t *Device
 	return NXP_GetDeviceDescriptor(usbdev, DeviceDescriptorData);
 #elif defined(LINUX)
 	return LINUX_GetDeviceDescriptor(usbdev, DeviceDescriptorData);
-#elif defined(GP_CHIP)
-	return GP_GetDeviceDescriptor(usbdev, DeviceDescriptorData);
 #endif
 }
 
@@ -1656,9 +1079,6 @@ uint8_t usUsb_GetDeviceConfigDescriptor(usb_device *usbdev, uint8_t index, uint1
 						ConfigDescriptorData, ConfigDescriptorDataLen);
 #elif defined(LINUX)
 	return USB_REOK;
-#elif defined(GP_CHIP)
-	return GP_GetDeviceConfigDescriptor(usbdev, index, cfgsize, 
-					ConfigDescriptorData, ConfigDescriptorDataLen);
 #endif
 }
 
@@ -1668,8 +1088,6 @@ uint8_t usUsb_SetDeviceConfigDescriptor(usb_device *usbdev, uint8_t cfgindex)
 	return NXP_SetDeviceConfigDescriptor(usbdev, cfgindex);
 #elif defined(LINUX)
 	return LINUX_SetDeviceConfigDescriptor(usbdev, cfgindex);
-#elif defined(GP_CHIP)
-	return GP_SetDeviceConfigDescriptor(usbdev, cfgindex);
 #endif
 }
 
@@ -1679,8 +1097,6 @@ uint8_t usUsb_ClaimInterface(usb_device *usbdev, void *cPrivate)
 	return NXP_ClaimInterface(usbdev, (nxp_clminface*)cPrivate);
 #elif defined(LINUX)
 	return USB_REOK;
-#elif defined(GP_CHIP)
-	return GP_ClaimInterface(usbdev, (nxp_clminface*)cPrivate);
 #endif
 }
 
@@ -1690,8 +1106,6 @@ uint8_t usUsb_GetMaxLUN(usb_device *usbdev, uint8_t *LunIndex)
 	return NXP_GetMaxLUN(usbdev, LunIndex);
 #elif defined(LINUX)
 	return USB_REOK;
-#elif defined(GP_CHIP)
-	return GP_GetMaxLUN(usbdev, LunIndex);
 #endif
 }
 
@@ -1701,8 +1115,6 @@ uint8_t usUsb_ResetMSInterface(usb_device *usbdev)
 	return NXP_ResetMSInterface(usbdev);
 #elif defined(LINUX)
 	return USB_REOK;
-#elif defined(GP_CHIP)
-	return GP_ResetMSInterface(usbdev);
 #endif
 }
 
@@ -1713,8 +1125,6 @@ uint8_t usUsb_RequestSense(usb_device *usbdev,
 	return NXP_RequestSense(usbdev, index, SenseData);
 #elif defined(LINUX)
 	return USB_REOK;
-#elif defined(GP_CHIP)
-	return GP_RequestSense(usbdev, index, SenseData);
 #endif
 }
 
@@ -1725,8 +1135,6 @@ uint8_t usUsb_GetInquiryData(usb_device *usbdev,
 	return NXP_GetInquiryData(usbdev, index, InquiryData);
 #elif defined(LINUX)
 	return USB_REOK;
-#elif defined(GP_CHIP)
-	return GP_GetInquiryData(usbdev, index, InquiryData);
 #endif
 }
 
@@ -1736,9 +1144,7 @@ uint8_t usUsb_ReadDeviceCapacity(usb_device *usbdev, uint32_t *Blocks, uint32_t 
 	return NXP_ReadDeviceCapacity(usbdev, Blocks, BlockSize);
 #elif defined(LINUX)
 	*BlockSize = DEF_SECTOR;
-	return USB_REOK;	
-#elif defined(GP_CHIP)
-	return GP_ReadDeviceCapacity(usbdev, Blocks, BlockSize);
+	return USB_REOK;
 #endif
 }
 
@@ -1748,8 +1154,6 @@ uint8_t usUsb_Init(usb_device *usbdev, void *os_priv)
 	return NXP_Init(usbdev, os_priv);
 #elif defined(LINUX)
 	return LINUX_Init(usbdev, os_priv);
-#elif defined(GP_CHIP)
-	return GP_Init(usbdev, os_priv);
 #endif
 }
 
@@ -1760,8 +1164,6 @@ uint8_t usUsb_DiskReadSectors(usb_device *usbdev,
 	return NXP_DiskReadSectors(usbdev, buff, secStart, numSec, BlockSize);
 #elif defined(LINUX)
 	return LINUX_DiskReadSectors(usbdev, buff, secStart, numSec, BlockSize);
-#elif defined(GP_CHIP)
-	return GP_DiskReadSectors(usbdev, buff, secStart, numSec, BlockSize);
 #endif
 
 }
@@ -1773,8 +1175,6 @@ uint8_t usUsb_DiskWriteSectors(usb_device *usbdev,
 	return NXP_DiskWriteSectors(usbdev, buff, secStart, numSec, BlockSize);
 #elif defined(LINUX)
 	return LINUX_DiskWriteSectors(usbdev, buff, secStart, numSec, BlockSize);
-#elif defined(GP_CHIP)
-	return GP_DiskWriteSectors(usbdev, buff, secStart, numSec, BlockSize);
 #endif
 }
 
@@ -1786,11 +1186,9 @@ uint8_t usUsb_DiskStartStop(usb_device *usbdev,
 						uint8_t index, uint8_t state)
 {
 #if defined(NXP_CHIP_18XX)
-	return NXP_DiskStartStop(usbdev, index, state);
+		return NXP_DiskStartStop(usbdev, index, state);
 #elif defined(LINUX)
-	return USB_REOK;
-#elif defined(GP_CHIP)
-	return GP_DiskStartStop(usbdev, index, state);
+		return USB_REOK;
 #endif
 }
 
