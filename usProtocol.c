@@ -612,11 +612,19 @@ static uint8_t usProtocol_aoaSendPackage(mux_itunes *uSdev, void *buffer, uint32
 	while(already < size){		
 		uint32_t sndSize = 0, freeSize = 0;
 		freeSize = size-already;
+	#if defined(NXP_CHIP_18XX)|| defined(GP_CHIP)	
 		if(freeSize >= USB_MTU_AOA){
 			sndSize = USB_MTU_AOA-1;
 		}else{
 			sndSize = freeSize;
 		}
+	#elif defined(LINUX)
+		if(freeSize % 512 == 0){
+			sndSize = freeSize-1;
+		}else{
+			sndSize = freeSize;
+		}
+	#endif		
 		if((rc = usUsb_BlukPacketSend(&(uSdev->usbdev), curBuf+already, 
 						sndSize, &actual_length)) != 0){
 			if(rc >= USB_DISCNT){
