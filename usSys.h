@@ -1,27 +1,21 @@
 #ifndef __USSYS_H_
 #define __USSYS_H_
 
-#include <stdint.h>
-#if defined(NXP_CHIP_18XX)
-#include "board.h"
-#include "USB.h"
-#include <ctype.h>
-#include <stdio.h>
-#endif
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-#define NXP_CHIP_18XX 1
-//#define LINUX   1
+//#define NXP_CHIP_18XX 1
+//#define GP_CHIP		1
+#define LINUX   1
 //#ifndef DEBUG_ENABLE
-//#define DEBUG_ENABLE1    1
+#define DEBUG_ENABLE1    1
 //#endif
 
-//#if defined(LINUX)
-//#define ENOUGH_MEMORY	1
-//#endif
+#if defined(LINUX)
+#define ENOUGH_MEMORY	1
+#endif
 /** @defgroup Mass_Storage_Host_Definition Main definitions
  * @ingroup Mass_Storage_Host_18xx43xx Mass_Storage_Host_17xx40xx
  * @{
