@@ -148,7 +148,8 @@
 		 *  \c HOST_DEVICE_SETTLE_DELAY_MS token to the required delay in milliseconds, and passed to the
 		 *  compiler using the -D switch.
 		 */
-						#define HOST_DEVICE_SETTLE_DELAY_MS        1000
+						//#define HOST_DEVICE_SETTLE_DELAY_MS        1000
+						#define HOST_DEVICE_SETTLE_DELAY_MS        2000 /*Modify by zhangwei 20170329*/
 					#endif
 
 		/** Enum for the error codes for the @ref EVENT_USB_Host_HostError() event.
