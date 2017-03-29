@@ -30,8 +30,6 @@
  * this code.
  */
 
-
-#pragma arm section code ="USB_RAM2", rwdata="USB_RAM2"
 #define  __INCLUDE_FROM_USB_DRIVER
 #include "../../Core/USBMode.h"
 
@@ -298,6 +296,7 @@ static uint8_t MS_Host_SendCommand(USB_ClassInfo_MS_Host_t* const MSInterfaceInf
 	}
 	
 	MS_CommandStatusWrapper_t SCSIStatusBlock;
+	printf("cccccccccccccccccccccccccccccccccccc\r\n");
 	return MS_Host_GetReturnedStatus(MSInterfaceInfo, &SCSIStatusBlock);
 }
 
@@ -611,9 +610,12 @@ uint8_t MS_Host_ReadDeviceCapacity(USB_ClassInfo_MS_Host_t* const MSInterfaceInf
 				}
 		};
 
+		printf("begin....\r\n");
 	if ((ErrorCode = MS_Host_SendCommand(MSInterfaceInfo, &SCSICommandBlock, DeviceCapacity)) != PIPE_RWSTREAM_NoError)
 	  return ErrorCode;
+	printf("ok..........\r\n");
 
+	printf("DeviceCapacity->Blocks=%u  DeviceCapacity->BlockSize=%u\r\n", DeviceCapacity->Blocks, DeviceCapacity->BlockSize);
 	DeviceCapacity->Blocks    = BE32_TO_CPU(DeviceCapacity->Blocks);
 	DeviceCapacity->BlockSize = BE32_TO_CPU(DeviceCapacity->BlockSize);
 
@@ -717,10 +719,9 @@ uint8_t MS_Host_ReadDeviceBlocks(USB_ClassInfo_MS_Host_t* const MSInterfaceInfo,
 					0x00                    // Unused (control)
 				}
 		};
-
+	
 	if ((ErrorCode = MS_Host_SendCommand(MSInterfaceInfo, &SCSICommandBlock, BlockBuffer)) != PIPE_RWSTREAM_NoError)
 	  return ErrorCode;
-
 	return PIPE_RWSTREAM_NoError;
 }
 
@@ -763,7 +764,44 @@ uint8_t MS_Host_WriteDeviceBlocks(USB_ClassInfo_MS_Host_t* const MSInterfaceInfo
 	return PIPE_RWSTREAM_NoError;
 }
 
+uint8_t MS_Host_StartStopDisk(USB_ClassInfo_MS_Host_t* const MSInterfaceInfo,
+                                  const uint8_t LUNIndex, uint8_t state)
+{
+	if ((USB_HostState[MSInterfaceInfo->Config.PortNumber] != HOST_STATE_Configured) || !(MSInterfaceInfo->State.IsActive)){
+		printf("Device Not Configured\r\n");
+		return HOST_SENDCONTROL_DeviceDisconnected;
+	}
+
+	uint8_t ErrorCode;
+
+	MS_CommandBlockWrapper_t SCSICommandBlock = (MS_CommandBlockWrapper_t)
+		{
+			.DataTransferLength = CPU_TO_LE32(0),
+			.Flags              = MS_COMMAND_DIR_DATA_IN,
+			.LUN                = LUNIndex,
+			.SCSICommandLength  = 6,
+			.SCSICommandData    =
+				{
+					0x1b,
+					0x00,                   // immediate
+					0x00,                   // Reserved
+					0x00,                   // Reserved
+					state,                   // start stop
+					0x00                    // Unused (control)
+				}
+		};
+
+	printf("Begin Stop/Start HDD\r\n");
+	if ((ErrorCode = MS_Host_SendCommand(MSInterfaceInfo, &SCSICommandBlock, NULL)) != PIPE_RWSTREAM_NoError){
+		printf("MS_Host_SendCommand Error:%d\r\n", ErrorCode);
+		return ErrorCode;
+	}
+	
+	printf("MS_Host_SendCommand Disk Stop/Start Successful..\r\n");
+	return PIPE_RWSTREAM_NoError;	
+}
 #endif
 
-#pragma arm section code, rwdata
+
+
 
