@@ -16,6 +16,11 @@
 #include "USB.h"
 #include <ctype.h>
 #include <stdio.h>
+#elif defined(GP_CHIP)
+#include "USB.h"
+#include <ctype.h>
+#include <stdio.h>
+#include <string.h>
 #elif defined(LINUX)
 #include <stdio.h>
 #include <errno.h>
@@ -83,7 +88,7 @@ typedef struct {
 usDisk_info uDinfo[STOR_MAX];
 
 static usDisk_info * usDisk_FindLocation(uint8_t type);
-#if defined(NXP_CHIP_18XX)
+#if defined(NXP_CHIP_18XX) || defined(GP_CHIP)
 extern uint8_t DCOMP_MS_Host_NextMSInterfaceEndpoint(void* const CurrentDescriptor);
 /*****************************************************************************
  * Private functions
@@ -117,12 +122,14 @@ static uint8_t usDisk_DeviceDetectHDD(uint8_t type, void *os_priv)
 	/*set os_priv*/
 	usUsb_Init(usbdev, os_priv);
 	/*GEt device description*/
-	memset(&DeviceDescriptorData, 0, sizeof(USB_StdDesDevice_t));
+	memset(&DeviceDescriptorData, 0, sizeof(USB_StdDesDevice_t));	
+	printf("Begin Get Deivec Descriptor...\r\n");
 	if(usUsb_GetDeviceDescriptor(usbdev, &DeviceDescriptorData)){
 		DSKDEBUG("usUusb_GetDeviceDescriptor Failed\r\n");
 		return DISK_REGEN;
 	}
 	
+	printf("Deivec Descriptor bNumConfigurations=%d...\r\n", DeviceDescriptorData.bNumConfigurations);
 	/*Set callback*/	
 	nxp_clminface nxpcall;	
 	nxpcall.callbackInterface = NXP_COMPFUNC_MSC_CLASS;
@@ -175,6 +182,10 @@ static uint8_t usDisk_DeviceDetectHDD(uint8_t type, void *os_priv)
 
 static uint8_t usDisk_DeviceDetectCard(uint8_t type, void *os_priv)
 {
+#if defined(GP_CHIP)
+	DSKDEBUG("Not Support SDCard\r\n");
+	return DISK_REGEN;
+#elif defined(NXP_CHIP_18XX)
 	usDisk_info *pDiskInfo= usDisk_FindLocation(type);
 	mci_card_struct *sdinfo = (mci_card_struct *)os_priv;
 	
@@ -194,7 +205,8 @@ static uint8_t usDisk_DeviceDetectCard(uint8_t type, void *os_priv)
 	printf("SD Card Enumerated. [Num:%d Blocks:%d BlockSzie:%u Cap:%lld]\r\n",
 			pDiskInfo->disknum, pDiskInfo->Blocks, pDiskInfo->BlockSize, pDiskInfo->disk_cap);
 
-	return DISK_REOK;	
+	return DISK_REOK;
+#endif	
 }
 
 void usDisk_DeviceInit(void *os_priv)

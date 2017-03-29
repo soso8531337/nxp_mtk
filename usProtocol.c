@@ -24,6 +24,10 @@
 #include <libusb-1.0/libusb.h>
 #include <sys/ioctl.h>
 #include <errno.h>
+#elif defined(GP_CHIP)
+#include "USB.h"
+#include <ctype.h>
+#include <stdio.h>
 #endif
 
 /*****************************************************************************
@@ -107,6 +111,8 @@ static struct accessory_t acc_default = {
 #define IOS_WIN_SIZE				131072 /*Must Not change this value*/
 #if defined(NXP_CHIP_18XX)
 #define USB_MTU				(32*1024)
+#elif defined(GP_CHIP)
+#define USB_MTU				(32*1024)
 #else
 #define USB_MTU				(258*1024)
 #endif
@@ -118,7 +124,7 @@ static struct accessory_t acc_default = {
 // this results in three URBs per full transfer, 32 USB packets each
 // if there are ZLP issues this should make them show up easily too
 #define USB_MTU_IOS			(3 * 16384)
-#if defined(NXP_CHIP_18XX)	
+#if defined(NXP_CHIP_18XX) || defined(GP_CHIP)	
 #define USB_MTU_AOA		(1*16384)
 #define IOS_MAX_PACKET		(32*1024)
 #elif defined(LINUX)
@@ -609,7 +615,7 @@ static uint8_t usProtocol_aoaSendPackage(mux_itunes *uSdev, void *buffer, uint32
 	}
 	/*aoa package send must send 16KB*n*/
 	curBuf = (uint8_t *)buffer;
-	while(already < size){		
+	while(already < size){
 		uint32_t sndSize = 0, freeSize = 0;
 		freeSize = size-already;
 	#if defined(NXP_CHIP_18XX)|| defined(GP_CHIP)	
@@ -624,7 +630,7 @@ static uint8_t usProtocol_aoaSendPackage(mux_itunes *uSdev, void *buffer, uint32
 		}else{
 			sndSize = freeSize;
 		}
-	#endif		
+	#endif	
 		if((rc = usUsb_BlukPacketSend(&(uSdev->usbdev), curBuf+already, 
 						sndSize, &actual_length)) != 0){
 			if(rc >= USB_DISCNT){
@@ -664,8 +670,11 @@ static uint8_t usProtocol_aoaRecvPackage(mux_itunes *uSdev, void **buffer,
 			if(rc >= USB_DISCNT){
 				PRODEBUG("Device Disconncet\r\n");
 				return PROTOCOL_DISCONNECT;
+			}else if(rc == USB_TMOUT){
+				PRODEBUG("Protocol Receive Timeout\r\n");
+				return PROTOCOL_RTIMOUT;
 			}						
-			PRODEBUG("Receive aoa Package Header Error\r\n");
+			PRODEBUG("Receive aoa Package First Error\r\n");
 			return PROTOCOL_REGEN;
 		}
 		if(actual_length < PRO_HDR){
@@ -705,8 +714,11 @@ static uint8_t usProtocol_aoaRecvPackage(mux_itunes *uSdev, void **buffer,
 						if(rc >= USB_DISCNT){
 							PRODEBUG("Device Disconncet\r\n");
 							return PROTOCOL_DISCONNECT;
+						}else if(rc == USB_TMOUT){
+							PRODEBUG("Protocol Receive Timeout\r\n");
+							return PROTOCOL_RTIMOUT;
 						}							
-						PRODEBUG("Receive aoa Package Header Error\r\n");
+						PRODEBUG("Receive aoa Package Header2 Error\r\n");
 						return PROTOCOL_REGEN;
 					}
 					uSdev->prohlen += actual_length;					
@@ -743,8 +755,11 @@ static uint8_t usProtocol_aoaRecvPackage(mux_itunes *uSdev, void **buffer,
 		if(rc >= USB_DISCNT){
 			PRODEBUG("Device Disconncet\r\n");
 			return PROTOCOL_DISCONNECT;
-		}									
-		PRODEBUG("Receive aoa Package Header Error\r\n");
+		}else if(rc == USB_TMOUT){
+			PRODEBUG("Protocol Receive Timeout\r\n");
+			return PROTOCOL_RTIMOUT;
+		}								
+		PRODEBUG("Receive aoa Package Stream Error\r\n");
 		return PROTOCOL_REGEN;
 	}
 
@@ -813,8 +828,11 @@ static uint8_t usProtocol_iosRecvPackage(mux_itunes *uSdev, void **buffer,
 			if(rc >= USB_DISCNT){
 				PRODEBUG("Device Disconncet\r\n");
 				return PROTOCOL_DISCONNECT;
-			}			
-			PRODEBUG("First Receive Package Error[%d]\r\n", rc);
+			}else if(rc == USB_TMOUT){
+				PRODEBUG("Protocol Receive Timeout\r\n");
+				return PROTOCOL_RTIMOUT;
+			}
+			PRODEBUG("First Receive ios Package Error[%d]\r\n", rc);
 			return PROTOCOL_REGEN;
 		}
 		struct mux_header *mhdr =  (struct mux_header *)tbuffer;
@@ -852,8 +870,11 @@ static uint8_t usProtocol_iosRecvPackage(mux_itunes *uSdev, void **buffer,
 				if(rc >= USB_DISCNT){
 					PRODEBUG("Device Disconncet\r\n");
 					return PROTOCOL_DISCONNECT;
+				}else if(rc == USB_TMOUT){
+					PRODEBUG("Protocol Receive Timeout\r\n");
+					return PROTOCOL_RTIMOUT;
 				}							
-				PRODEBUG("Receive ios Package Header Error\r\n");
+				PRODEBUG("Receive ios Package Header2 Error\r\n");
 				return PROTOCOL_REGEN;
 			}
 		}else{
@@ -913,8 +934,11 @@ static uint8_t usProtocol_iosRecvPackage(mux_itunes *uSdev, void **buffer,
 		if(rc >= USB_DISCNT){
 			PRODEBUG("Device Disconncet\r\n");
 			return PROTOCOL_DISCONNECT;
+		}else if(rc == USB_TMOUT){
+			PRODEBUG("Protocol Receive Timeout\r\n");
+			return PROTOCOL_RTIMOUT;
 		}									
-		PRODEBUG("Receive ios Package Header Error\r\n");
+		PRODEBUG("Receive ios Package Stream Error\r\n");
 		return PROTOCOL_REGEN;
 	}
 	if(payload != NULL){
@@ -943,7 +967,7 @@ static uint8_t usProtocol_iosRecvPackage(mux_itunes *uSdev, void **buffer,
 /*****************************************************************************
  * Private functions[Chip]
  ****************************************************************************/
-#if defined(NXP_CHIP_18XX)
+#if defined(NXP_CHIP_18XX) || defined(GP_CHIP)
 static uint8_t NXP_FILTERFUNC_AOA_CLASS(void* const CurrentDescriptor)
 {
 	USB_Descriptor_Header_t* Header = DESCRIPTOR_PCAST(CurrentDescriptor, USB_Descriptor_Header_t);
@@ -1035,6 +1059,7 @@ uint8_t usProtocol_SwitchAOAMode(usb_device *usbdev)
 		return PROTOCOL_REGEN;
 	}
 	/*Found Interface Class */
+	usUsb_Print(ConfigDescriptorData, ConfigDescriptorSize); 
 	/*Must Set to var, the funciton will change the point*/
 	PtrConfigDescriptorData = ConfigDescriptorData;
 	if (USB_GetNextDescriptorComp(&ConfigDescriptorSize, (void **)&PtrConfigDescriptorData,
@@ -1487,7 +1512,7 @@ uint8_t usProtocol_ConnectPhone(void)
 	
 	return PROTOCOL_REOK;	
 }
-#if defined(NXP_CHIP_18XX)
+#if defined(NXP_CHIP_18XX) || defined(GP_CHIP)
 uint8_t usProtocol_DeviceDetect(void *os_priv)
 {
 	USB_StdDesDevice_t DeviceDescriptorData;

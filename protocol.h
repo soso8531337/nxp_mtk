@@ -1,24 +1,3 @@
-/*
- * usb.h
- *
- * Copyright (C) 2009 Hector Martin <hector@marcansoft.com>
- * Copyright (C) 2009 Nikias Bassen <nikias@gmx.li>
- * Copyright (C) 2009 Martin Szulecki <opensuse@sukimashita.com>
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation, either version 2 or version 3.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
- */
-
 #ifndef PROTOCOL_H
 #define PROTOCOL_H
 
@@ -74,7 +53,7 @@ struct scsi_head{
 	int32_t len;
 	int16_t wlun;
 	int16_t relag; /*Response Code*/
-}__attribute__((__packed__));
+};
 
 struct scsi_inquiry_info{
   int64_t size;
@@ -82,7 +61,7 @@ struct scsi_inquiry_info{
   char product[ 32];
   char version[ 32];
   char serial[32];
-}__attribute__((__packed__));
+};
 
 typedef struct acessory_parameter
 {
@@ -93,6 +72,6 @@ typedef struct acessory_parameter
 	char hw_version[16];
 	char cardid[8];
 	char license[120];
-}__attribute__((__packed__))vs_acessory_parameter;
+} vs_acessory_parameter;
 
 #endif

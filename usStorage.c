@@ -44,6 +44,12 @@
 #include "FreeRTOS.h"
 #include "task.h"
 #include "i2c.h"
+#elif defined(GP_CHIP)
+#include <string.h>
+#include "USB.h"
+#include <ctype.h>
+#include "FreeRTOS.h"
+#include "task.h"
 #elif defined(LINUX)
 #include <stdio.h>
 #include <errno.h>
@@ -627,10 +633,14 @@ static int usStorage_diskWRITE(uint8_t *buffer, uint32_t recvSize, struct scsi_h
 		uint8_t *pbuffer = NULL;
 		paySize = 0;
 		if((rc = usProtocol_RecvPackage((void **)&pbuffer, hSize, &paySize))){
-			SDEBUGOUT("usProtocol_RecvPackage Failed\r\n");
-			/*Write to Phone*/
-			header->relag = 1;
-			//usStorage_sendHEAD(header);			
+			if(rc == PROTOCOL_RTIMOUT){
+				SDEBUGOUT("usStorage_diskWRITE Receive Timeout\r\n");
+			}else{
+				SDEBUGOUT("usProtocol_RecvPackage Failed\r\n");
+				/*Write to Phone*/
+				header->relag = 1;				
+				//usStorage_sendHEAD(header);			
+			}
 			return rc;
 		}		
 		hSize+= paySize;
@@ -692,6 +702,7 @@ static int usStorage_diskWRITE(uint8_t *buffer, uint32_t recvSize, struct scsi_h
 	uint32_t paySize, curSize = 0, secSize = 0, sdivSize = 0;
 	uint32_t addr;	
 	uint8_t sector[USDISK_SECTOR] = {0};
+	uint8_t res;
 
 	if(!buffer || !header){
 		SDEBUGOUT("usStorage_diskWRITE Parameter Error\r\n");
@@ -726,12 +737,16 @@ static int usStorage_diskWRITE(uint8_t *buffer, uint32_t recvSize, struct scsi_h
 	while(curSize < header->len){
 		uint32_t secCount = 0;
 		uint8_t *ptr = NULL, *pbuffer = NULL;
-		if(usProtocol_RecvPackage((void **)&pbuffer, hSize, &paySize)){
-			SDEBUGOUT("usProtocol_RecvPackage Failed\r\n");
-			/*Write to Phone*/
-			header->relag = 1;
-			usStorage_sendHEAD(header);			
-			return 1;
+		if((res = usProtocol_RecvPackage((void **)&pbuffer, hSize, &paySize)) != 0){
+			if(res == PROTOCOL_RTIMOUT){
+				SDEBUGOUT("usStorage_diskWRITE Timeout\r\n");
+			}else{
+				SDEBUGOUT("usProtocol_RecvPackage Failed\r\n");
+				/*Write to Phone*/
+				header->relag = 1;
+				usStorage_sendHEAD(header);
+			}
+			return res;
 		}
 		/*add handle size*/		
 		hSize+= paySize;
@@ -885,9 +900,11 @@ static int usStorage_Handle(void)
 	if((rc = usProtocol_RecvPackage((void **)&buffer, 0, &size)) != 0){
 		if(rc == PROTOCOL_DISCONNECT){
 			return PROTOCOL_DISCONNECT;
+		}else if(rc == PROTOCOL_RTIMOUT){
+			return 0;
 		}
 		SDEBUGOUT("usProtocol_RecvPackage Failed\r\n");
-		return 1;
+		return rc;
 	}
 	if(size < PRO_HDR){
 		SDEBUGOUT("usProtocol_RecvPackage Too Small [%d]Bytes\r\n", size);
@@ -986,6 +1003,16 @@ static uint8_t	NXP_notifyDiskChange(void)
 	return 0;
 }
 
+static void free_usbmemory(uint8_t corenum)
+{
+	int i;
+
+	Pipe_ClosePipe(corenum, PIPE_CONTROLPIPE);	// FIXME close only relevant pipes , take long time in ISR	
+	for (i = PIPE_CONTROLPIPE + 1; i < PIPE_TOTAL_PIPES; i++)
+		if (PipeInfo[corenum][i].PipeHandle != 0) {
+			Pipe_ClosePipe(corenum, i);
+		}
+}
  /*
 **return value:
 *0: no usb disk
@@ -1125,26 +1152,32 @@ void EVENT_USB_Host_DeviceUnattached(const uint8_t corenum)
 	uint8_t res;
 	printf(("\r\nDevice Unattached on port %d\r\n"), corenum);
 	//Chip_CREG_DisableUSB0Phy();
-	USB_Disable(corenum, USB_MODE_Host);
 	memset(&(UStorage_Interface[corenum].State), 0x00, sizeof(UStorage_Interface[corenum].State));
 	if(corenum == NXP_USB_DISK){
 		usDisk_DeviceDisConnect(USB_DISK, NULL);
-		NXP_setDiskNotifyTag();		
+		NXP_setDiskNotifyTag();	
+	#if defined(HALT_RESTART)	
 		/*notify i2c to restart nxp*/
 		i2c_ioctl(IOCTL_POWER_RESET_I2C, NULL);
+	#endif
 	}else{
 		res = usProtocol_DeviceDisConnect();
 		if(res == 0){
 			printf("No Phone Connceted, so Not Restart NXP\r\n");
+			return;
 		}else{
 			printf("Phone [%d] Connceted Restart NXP[Try Stop Disk]\r\n", res);
 			/*notify i2c to restart nxp*/
 			usDisk_DiskStartStop(0);
+		#if defined(HALT_RESTART)				
 			i2c_ioctl(IOCTL_POWER_RESET_I2C, NULL);
+		#endif
 		}
-	}
+	}	
+	free_usbmemory(corenum);
+	USB_Disable(corenum, USB_MODE_Host);
 	/*We Need to init usb driver again, if not usb driver will broken*/
-	sdmmc_waitms2(20);
+	sdmmc_waitms2(50);
 	usSys_init(corenum);
 }
 
@@ -1167,16 +1200,20 @@ void EVENT_USB_Host_DeviceEnumerationComplete(const uint8_t corenum)
 /** Event handler for the USB_HostError event. This indicates that a hardware error occurred while in host mode. */
 void EVENT_USB_Host_HostError(const uint8_t corenum, const uint8_t ErrorCode)
 {
-	//Chip_CREG_DisableUSB0Phy();
+	//Chip_CREG_DisableUSB0Phy();	
+	free_usbmemory(corenum);
 	USB_Disable(corenum, USB_MODE_Host);
 	
 	printf(("Host Mode Error\r\n"
 			  " -- Error port %d\r\n"
 			  " -- Error Code %d\r\n" ), corenum, ErrorCode);
-	
+	sdmmc_waitms2(50);
+	usSys_init(corenum);	
 	/*notify i2c to restart nxp*/	
 	usDisk_DiskStartStop(0);
+#if defined(HALT_RESTART)					
 	i2c_ioctl(IOCTL_POWER_RESET_I2C, NULL);
+#endif
 }
 
 /** Event handler for the USB_DeviceEnumerationFailed event. This indicates that a problem occurred while
@@ -1186,8 +1223,244 @@ void EVENT_USB_Host_DeviceEnumerationFailed(const uint8_t corenum,
 											const uint8_t ErrorCode,
 											const uint8_t SubErrorCode)
 {
-	//Chip_CREG_DisableUSB0Phy();
+	//Chip_CREG_DisableUSB0Phy();	
+	free_usbmemory(corenum);
 	USB_Disable(corenum, USB_MODE_Host);
+	printf(("Dev Enum Error\r\n"
+			  " -- Error port %d\r\n"
+			  " -- Error Code %d\r\n"
+			  " -- Sub Error Code %d\r\n"
+			  " -- In State %d\r\n" ),
+			 corenum, ErrorCode, SubErrorCode, USB_HostState[corenum]);
+	printf("Reinit Core:%d\r\n", corenum);
+	sdmmc_waitms2(50);
+	usSys_init(corenum);	
+	/*notify i2c to restart nxp*/	
+	usDisk_DiskStartStop(0);
+#if defined(HALT_RESTART)	
+	i2c_ioctl(IOCTL_POWER_RESET_I2C, NULL);
+#endif
+}
+#elif defined(GP_CHIP)
+#define GP_USB_PHONE 	0
+#define GP_USB_DISK	1
+/*Plug flag*/
+volatile uint8_t notifyPhone = 0;
+/** LPCUSBlib Mass Storage Class driver interface configuration and state information. This structure is
+ *  passed to all Mass Storage Class driver functions, so that multiple instances of the same class
+ *  within a device can be differentiated from one another.
+ */
+ /** Use USB0 for Phone
+ *    Use USB1 for Mass Storage
+*/
+static USB_ClassInfo_MS_Host_t UStorage_Interface[]	= {
+	{
+		.Config = {
+			.DataINPipeNumber       = 1,
+			.DataINPipeDoubleBank   = false,
+
+			.DataOUTPipeNumber      = 2,
+			.DataOUTPipeDoubleBank  = false,
+			.PortNumber = 0,
+		},
+	},
+	{
+		.Config = {
+			.DataINPipeNumber       = 1,
+			.DataINPipeDoubleBank   = false,
+
+			.DataOUTPipeNumber      = 2,
+			.DataOUTPipeDoubleBank  = false,
+			.PortNumber = 1,
+		},
+	},
+	
+};
+
+static uint8_t GP_setDiskNotifyTag(void)
+{
+	if(USB_HostState[GP_USB_PHONE] != HOST_STATE_Configured){
+		printf("No Phone Detected...\r\n");
+		return 0;
+	}
+	if(notifyPhone++ == 127){
+		notifyPhone = 1;
+	}
+	return notifyPhone;
+}
+
+static uint8_t GP_getDiskNotifyTag(void)
+{
+	return notifyPhone;
+}
+
+static void GP_resetDiskNotifyTag(void)
+{
+	notifyPhone = 0;
+}
+
+static uint8_t	GP_notifyDiskChange(void)
+{
+	struct scsi_head header;
+	static uint32_t wtag = 0;
+
+	header.head = SCSI_DEVICE_MAGIC;
+	header.ctrid = SCSI_GET_LUN;
+
+	header.wtag = wtag++;
+	header.len = 1;
+
+	header.relag = 0;
+	header.wlun = 0;
+	header.addr = 0;
+	if(usStorage_diskLUN(&header) != 0){
+		printf("Get Disk Lun Failed\r\n");
+	}
+	printf("Notify Disk Change to Phone Successful....\r\n");
+
+	return 0;
+}
+ static void SetupHardware(void)
+ {
+	USB_Init(UStorage_Interface[0].Config.PortNumber, USB_MODE_Host);	
+	USB_Init(UStorage_Interface[1].Config.PortNumber, USB_MODE_Host);
+ }
+
+ /*
+**return value:
+*0: no usb disk
+*1: usb disk ok
+*/
+ static void wait_usbdisk(void)
+{
+	if(USB_HostState[GP_USB_DISK] < HOST_STATE_Powered){
+		//printf("Disk status=%d\r\n", USB_HostState[NXP_USB_DISK]);
+		return ;
+	}
+	while (USB_HostState[GP_USB_DISK] != HOST_STATE_Configured) {
+		MS_Host_USBTask(&UStorage_Interface[GP_USB_DISK]);
+		USB_USBTask(GP_USB_DISK, USB_MODE_Host);
+		continue;
+	}
+}
+
+void vs_main_disk(void *pvParameters)
+{
+	while(1){
+		wait_usbdisk();
+		vTaskDelay(100);
+	}
+}
+
+void vs_main(void *pvParameters)
+{
+	SetupHardware();
+
+	SDEBUGOUT("U-Storage Running.\r\n");
+	xTaskCreate(vs_main_disk, "vTaskDisk", 1024,
+			NULL, (tskIDLE_PRIORITY + 2UL), (TaskHandle_t *) NULL);
+
+	while(1){
+		if(USB_HostState[GP_USB_PHONE] < HOST_STATE_Powered){
+			//printf("Phone status=%d\r\n", USB_HostState[NXP_USB_PHONE]);
+			vTaskDelay(100);
+			continue;
+		}
+		while (USB_HostState[GP_USB_PHONE] != HOST_STATE_Configured) {
+			if(USB_HostState[GP_USB_PHONE] == HOST_STATE_Unattached){
+				printf("Phone Unttached...\r\n");
+				break;
+			}
+			MS_Host_USBTask(&UStorage_Interface[GP_USB_PHONE]);
+			USB_USBTask(GP_USB_PHONE, USB_MODE_Host);
+			continue;
+		}
+		/*Connect Phone Device*/
+		if(usProtocol_ConnectPhone()){
+			/*Connect to Phone Failed*/
+			vTaskDelay(200);
+			continue;
+		}
+		usStorage_Handle();
+		if(USB_HostState[GP_USB_PHONE] == HOST_STATE_Configured &&
+					GP_getDiskNotifyTag()){
+			printf("We Need To Notify Phone Disk Changed.....\r\n");
+			GP_notifyDiskChange();			
+			GP_resetDiskNotifyTag();
+		}
+	}
+}
+
+
+/** Event handler for the USB_DeviceAttached event. This indicates that a device has been attached to the host, and
+ *  starts the library USB task to begin the enumeration and USB management process.
+ */
+void EVENT_USB_Host_DeviceAttached(const uint8_t corenum)
+{
+	if(corenum == GP_USB_DISK){
+		printf(("Disk Attached on port %d\r\n"), corenum);
+	}else{
+		printf(("Phone Attached on port %d\r\n"), corenum);	
+	}
+}
+
+/** Event handler for the USB_DeviceUnattached event. This indicates that a device has been removed from the host, and
+ *  stops the library USB task management process.
+ */
+void EVENT_USB_Host_DeviceUnattached(const uint8_t corenum)
+{
+	uint8_t res;
+	printf(("\r\nDevice Unattached on port %d\r\n"), corenum);
+	memset(&(UStorage_Interface[corenum].State), 0x00, sizeof(UStorage_Interface[corenum].State));
+	if(corenum == GP_USB_DISK){
+		usDisk_DeviceDisConnect(USB_DISK, NULL);
+		GP_setDiskNotifyTag();		
+	}else{
+		res = usProtocol_DeviceDisConnect();
+		if(res == 0){
+			printf("No Phone Connceted, so Not Restart NXP\r\n");
+		}else{
+			printf("Phone [%d] Connceted Restart NXP[Try Stop Disk]\r\n", res);
+			/*notify i2c to restart nxp*/
+			usDisk_DiskStartStop(0);
+		}
+	}
+}
+
+/** Event handler for the USB_DeviceEnumerationComplete event. This indicates that a device has been successfully
+ *  enumerated by the host and is now ready to be used by the application.
+ */
+void EVENT_USB_Host_DeviceEnumerationComplete(const uint8_t corenum)
+{
+	if(corenum == GP_USB_DISK){
+		printf("Disk Enumeration on port %d\r\n", corenum);
+		usDisk_DeviceDetect(USB_DISK, &UStorage_Interface[corenum]);		
+		GP_setDiskNotifyTag();
+	}else if(corenum == GP_USB_PHONE){
+		printf("Phone Enumeration on port %d\r\n", corenum);
+		usProtocol_DeviceDetect(&UStorage_Interface[corenum]);	
+	}else{
+		SDEBUGOUT("Unknown USB Port %d.\r\n", corenum);
+	}
+}
+/** Event handler for the USB_HostError event. This indicates that a hardware error occurred while in host mode. */
+void EVENT_USB_Host_HostError(const uint8_t corenum, const uint8_t ErrorCode)
+{
+	printf(("Host Mode Error\r\n"
+			  " -- Error port %d\r\n"
+			  " -- Error Code %d\r\n" ), corenum, ErrorCode);
+	
+	/*notify i2c to restart nxp*/	
+	usDisk_DiskStartStop(0);
+}
+
+/** Event handler for the USB_DeviceEnumerationFailed event. This indicates that a problem occurred while
+ *  enumerating an attached USB device.
+ */
+void EVENT_USB_Host_DeviceEnumerationFailed(const uint8_t corenum,
+											const uint8_t ErrorCode,
+											const uint8_t SubErrorCode)
+{
 	printf(("Dev Enum Error\r\n"
 			  " -- Error port %d\r\n"
 			  " -- Error Code %d\r\n"
@@ -1197,8 +1470,8 @@ void EVENT_USB_Host_DeviceEnumerationFailed(const uint8_t corenum,
 	printf("Reinit Core:%d\r\n", corenum);
 	/*notify i2c to restart nxp*/	
 	usDisk_DiskStartStop(0);
-	i2c_ioctl(IOCTL_POWER_RESET_I2C, NULL);
 }
+
 #elif defined(LINUX)
 
 #define UEVENT_BUFFER_SIZE		2048
